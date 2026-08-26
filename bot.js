@@ -46,7 +46,7 @@ bot.on('text', async (ctx) => {
   const text = ctx.message.text;
   const state = userStates.get(chatId) || {};
 
-  const links = text.match(/https:\/\/www\.tradingview\.com\/x\/[a-zA-Z0-9]+\//g) || [];
+  const links = text.match(/https:\/\/[a-z]*\.tradingview\.com\/x\/[a-zA-Z0-9]+\//g) || [];
 
   if (links.length > 0 && (!state.step || state.step === 'collecting_links')) {
     state.links = links;
