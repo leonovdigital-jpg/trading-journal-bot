@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
+const express = require('express');
 
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwJZUFV2oMIVz0gx0f6O8zRq4nFUeTA9q4-hr8JUf00ompMlYM1X9_G1Us4r9x4L4_MlQ/exec';
@@ -17,13 +18,13 @@ async function uploadToGoogleSheets(data, links) {
       thoughts: data.thoughts,
       position: data.position,
       errors: '',
-      rating: links[0] || '', // 1-5 (исходный таймфрейм)
-      screenshot1h: links[1] || '', // 1h
-      screenshot4h: links[2] || '', // 4h
-      screenshot1d: links[3] || '', // 1d
-      dxySmt1: links[4] || '', // DXY 1h (если есть)
-      dxySmt4: links[5] || '', // DXY 4h (если есть)
-      dxySmt1d: links[6] || '' // DXY 1d (если есть)
+      rating: links[0] || '',
+      screenshot1h: links[1] || '',
+      screenshot4h: links[2] || '',
+      screenshot1d: links[3] || '',
+      dxySmt1: links[4] || '',
+      dxySmt4: links[5] || '',
+      dxySmt1d: links[6] || ''
     };
 
     await axios.post(WEBHOOK_URL, payload);
@@ -40,13 +41,11 @@ bot.start((ctx) => {
   ctx.reply('👋 Привет! Начинай отправлять Share ссылки с TradingView:\n\n1️⃣ 1h\n2️⃣ 4h\n3️⃣ 1d\n4️⃣ DXY 1h (опционально)\n5️⃣ DXY 4h (опционально)\n6️⃣ DXY 1d (опционально)\n\nКогда закончил → напиши /ready');
 });
 
-
 bot.on('text', async (ctx) => {
   const chatId = ctx.chat.id;
   const text = ctx.message.text;
   const state = userStates.get(chatId) || {};
 
-  // Parse all links from message
   const links = text.match(/https:\/\/www\.tradingview\.com\/x\/[a-zA-Z0-9]+\//g) || [];
 
   if (links.length > 0 && (!state.step || state.step === 'collecting_links')) {
@@ -59,7 +58,6 @@ bot.on('text', async (ctx) => {
 
     ctx.reply(`✅ Получено ${links.length} ссылок:\n\n${display}\n\nДалее → выбери актив`);
 
-    // Automatically ask for asset
     state.step = 'waiting_asset';
     userStates.set(chatId, state);
 
@@ -75,7 +73,6 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // Thoughts input
   if (state.step === 'waiting_thoughts') {
     state.thoughts = text;
 
@@ -144,9 +141,30 @@ bot.on('callback_query', async (ctx) => {
   await ctx.answerCbQuery();
 });
 
+const app = express();
+app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
+
+app.post('/bot', (req, res) => {
+  bot.handleUpdate(req.body);
+  res.sendStatus(200);
+});
+
+app.listen(PORT, async () => {
+  const BOT_DOMAIN = process.env.RENDER_EXTERNAL_URL || 'https://trading-journal-bot.onrender.com';
+  const webhookUrl = `${BOT_DOMAIN}/bot`;
+
+  try {
+    await bot.telegram.setWebhook(webhookUrl);
+    console.log(`🤖 Trade Journal Bot webhook set to ${webhookUrl}`);
+  } catch (err) {
+    console.error('Webhook error:', err.message);
+  }
+
+  console.log(`📡 Server listening on port ${PORT}`);
+});
+
 process.on('SIGINT', () => {
   process.exit(0);
 });
-
-bot.launch();
-console.log('🤖 Trade Journal Bot started...');
