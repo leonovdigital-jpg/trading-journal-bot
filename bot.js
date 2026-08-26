@@ -157,10 +157,16 @@ app.listen(PORT, async () => {
   const webhookUrl = `${BOT_DOMAIN}/bot`;
 
   try {
+    await bot.telegram.deleteWebhook();
+    console.log('🗑️ Deleted old webhook');
+
+    await new Promise(r => setTimeout(r, 1000));
+
     await bot.telegram.setWebhook(webhookUrl);
     console.log(`🤖 Trade Journal Bot webhook set to ${webhookUrl}`);
+
     const info = await bot.telegram.getWebhookInfo();
-    console.log(`📍 Webhook info:`, info);
+    console.log(`📍 Webhook info:`, JSON.stringify(info, null, 2));
   } catch (err) {
     console.error('❌ Webhook error:', err.message);
   }
