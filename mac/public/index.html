@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trade Checklist</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="indicator">
+      <div class="lamp" id="lamp"></div>
+    </div>
+
+    <div class="checklist-view" id="checklistView">
+      <div class="question-container">
+        <h2 class="question-number" id="questionNumber"></h2>
+        <p class="question-text" id="questionText"></p>
+        <div class="button-group" id="buttonGroup"></div>
+      </div>
+    </div>
+
+    <div class="result-view" id="resultView" style="display: none;">
+      <div class="result-content">
+        <p class="result-message" id="resultMessage"></p>
+        <div class="stats">
+          <p>Отказов сегодня: <span id="rejectCount">0</span></p>
+        </div>
+        <button class="btn-finish" id="finishBtn">Завершить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

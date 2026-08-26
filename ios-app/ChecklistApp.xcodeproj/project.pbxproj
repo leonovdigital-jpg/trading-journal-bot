@@ -1,0 +1,53 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+/* Begin PBXBuildFile section */
+		EE6F5B04C15940DABE2F856C /* ChecklistAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DC9B93E1B774CA38CA17A73; };
+		B02A464066424E3AB500952C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB7F1922C2A8449FB0D67100; };
+		D9551E3D515C4FE9AC73B9A4 /* ChecklistViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0659B174195245E499B95B7C; };
+		8A06B604BB764F33BD6EEFA9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6DA5C65110E44F26A11605C7; };
+/* End PBXBuildFile section */
+/* Begin PBXFileReference section */
+		8DC9B93E1B774CA38CA17A73 /* ChecklistAppApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistAppApp.swift; sourceTree = "<group>"; };
+		AB7F1922C2A8449FB0D67100 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		0659B174195245E499B95B7C /* ChecklistViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistViewModel.swift; sourceTree = "<group>"; };
+		6DA5C65110E44F26A11605C7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F61442C4A930470EADAA4B0D /* ChecklistApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ChecklistApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+/* Begin PBXFrameworksBuildPhase section */
+		B3A09740E6E64FA0A68ADB2C /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+/* Begin PBXGroup section */
+		373B6F472E714A298B4497A4 = {isa = PBXGroup; children = (0056D70B47394B0FAFF84D39, 80E07229DEB147CCABA3C70D); sourceTree = "<group>"; };
+		80E07229DEB147CCABA3C70D = {isa = PBXGroup; children = (F61442C4A930470EADAA4B0D); name = Products; sourceTree = "<group>"; };
+		0056D70B47394B0FAFF84D39 = {isa = PBXGroup; children = (8DC9B93E1B774CA38CA17A73, AB7F1922C2A8449FB0D67100, 0659B174195245E499B95B7C, 6DA5C65110E44F26A11605C7); name = ChecklistApp; path = ChecklistApp; sourceTree = "<group>"; };
+/* End PBXGroup section */
+/* Begin PBXNativeTarget section */
+		579C2628CFE74481B2FBB8B8 /* ChecklistApp */ = {isa = PBXNativeTarget; buildConfigurationList = 323CF88D31074469A3F0E283; buildPhases = (143091C61804471C84FBA238, B3A09740E6E64FA0A68ADB2C, 1F763BB62B4642C0A6FC0061); buildRules = (); dependencies = (); name = ChecklistApp; productName = ChecklistApp; productReference = F61442C4A930470EADAA4B0D; productType = "com.apple.product-type.application"; };
+/* End PBXNativeTarget section */
+/* Begin PBXProject section */
+		1DDB2112B49B43A599EC69BD /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1430; TargetAttributes = {579C2628CFE74481B2FBB8B8 = {CreatedOnToolsVersion = 14.3;};};}; buildConfigurationList = EC92EDD20F9C4952B74238F6; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = 373B6F472E714A298B4497A4; productRefGroup = 80E07229DEB147CCABA3C70D; projectDirPath = ""; projectRoot = ""; targets = (579C2628CFE74481B2FBB8B8); };
+/* End PBXProject section */
+/* Begin PBXResourcesBuildPhase section */
+		1F763BB62B4642C0A6FC0061 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (8A06B604BB764F33BD6EEFA9); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+/* Begin PBXSourcesBuildPhase section */
+		143091C61804471C84FBA238 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (EE6F5B04C15940DABE2F856C, B02A464066424E3AB500952C, D9551E3D515C4FE9AC73B9A4); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+/* Begin XCBuildConfiguration section */
+		AD32B844DC6640CFB861F3D0 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_TESTABILITY = YES; GCC_DYNAMIC_NO_PIC = NO; GCC_NO_COMMON_BLOCKS = YES; GCC_OPTIMIZATION_LEVEL = 0; GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)"); IPHONEOS_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE; ONLY_ACTIVE_ARCH = YES; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 5.0; }; name = Debug; };
+		D8ABE1713FF8401DAB0302F9 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; IPHONEOS_DEPLOYMENT_TARGET = 14.0; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
+		C36692D2392B40F68A3D1344 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_IDENTITY = ""; CODE_SIGNING_REQUIRED = NO; IPHONEOS_DEPLOYMENT_TARGET = 14.0; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = com.trading.ChecklistApp; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		EAC539EB3BE543ADBEA00F60 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_IDENTITY = ""; CODE_SIGNING_REQUIRED = NO; IPHONEOS_DEPLOYMENT_TARGET = 14.0; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = com.trading.ChecklistApp; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+/* End XCBuildConfiguration section */
+/* Begin XCConfigurationList section */
+		EC92EDD20F9C4952B74238F6 /* Build configuration list for PBXProject "ChecklistApp" */ = {isa = XCConfigurationList; buildConfigurations = (AD32B844DC6640CFB861F3D0, D8ABE1713FF8401DAB0302F9); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		323CF88D31074469A3F0E283 /* Build configuration list for PBXNativeTarget "ChecklistApp" */ = {isa = XCConfigurationList; buildConfigurations = (C36692D2392B40F68A3D1344, EAC539EB3BE543ADBEA00F60); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = 1DDB2112B49B43A599EC69BD;
+}

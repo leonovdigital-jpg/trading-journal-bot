@@ -1,0 +1,79 @@
+{
+  "" : {
+    "diagnostics" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ios-app-v2-primary.dia",
+    "emit-module-dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ios-app-v2-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ios-app-v2-primary-emit-module.dia",
+    "pch" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ios-app-v2-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ios-app-v2-primary.swiftdeps"
+  },
+  "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/ios-app-v2/App.swift" : {
+    "const-values" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/App.swiftconstvalues",
+    "dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/App.d",
+    "diagnostics" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/App.dia",
+    "index-unit-output-path" : "/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/App.o",
+    "llvm-bc" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/App.bc",
+    "object" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/App.o",
+    "swift-dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/App.swiftdeps",
+    "swiftmodule" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/App~partial.swiftmodule"
+  },
+  "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/ios-app-v2/Models/AppState.swift" : {
+    "const-values" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/AppState.swiftconstvalues",
+    "dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/AppState.d",
+    "diagnostics" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/AppState.dia",
+    "index-unit-output-path" : "/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/AppState.o",
+    "llvm-bc" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/AppState.bc",
+    "object" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/AppState.o",
+    "swift-dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/AppState.swiftdeps",
+    "swiftmodule" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/AppState~partial.swiftmodule"
+  },
+  "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/ios-app-v2/Models/Question.swift" : {
+    "const-values" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/Question.swiftconstvalues",
+    "dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/Question.d",
+    "diagnostics" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/Question.dia",
+    "index-unit-output-path" : "/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/Question.o",
+    "llvm-bc" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/Question.bc",
+    "object" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/Question.o",
+    "swift-dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/Question.swiftdeps",
+    "swiftmodule" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/Question~partial.swiftmodule"
+  },
+  "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/ios-app-v2/Utils/LoggerService.swift" : {
+    "const-values" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LoggerService.swiftconstvalues",
+    "dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LoggerService.d",
+    "diagnostics" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LoggerService.dia",
+    "index-unit-output-path" : "/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LoggerService.o",
+    "llvm-bc" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LoggerService.bc",
+    "object" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LoggerService.o",
+    "swift-dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LoggerService.swiftdeps",
+    "swiftmodule" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LoggerService~partial.swiftmodule"
+  },
+  "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/ios-app-v2/Views/ChecklistView.swift" : {
+    "const-values" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ChecklistView.swiftconstvalues",
+    "dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ChecklistView.d",
+    "diagnostics" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ChecklistView.dia",
+    "index-unit-output-path" : "/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ChecklistView.o",
+    "llvm-bc" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ChecklistView.bc",
+    "object" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ChecklistView.o",
+    "swift-dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ChecklistView.swiftdeps",
+    "swiftmodule" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/ChecklistView~partial.swiftmodule"
+  },
+  "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/ios-app-v2/Views/LightIndicator.swift" : {
+    "const-values" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LightIndicator.swiftconstvalues",
+    "dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LightIndicator.d",
+    "diagnostics" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LightIndicator.dia",
+    "index-unit-output-path" : "/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LightIndicator.o",
+    "llvm-bc" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LightIndicator.bc",
+    "object" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LightIndicator.o",
+    "swift-dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LightIndicator.swiftdeps",
+    "swiftmodule" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/LightIndicator~partial.swiftmodule"
+  },
+  "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/ios-app-v2/Views/QuestionView.swift" : {
+    "const-values" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/QuestionView.swiftconstvalues",
+    "dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/QuestionView.d",
+    "diagnostics" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/QuestionView.dia",
+    "index-unit-output-path" : "/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/QuestionView.o",
+    "llvm-bc" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/QuestionView.bc",
+    "object" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/QuestionView.o",
+    "swift-dependencies" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/QuestionView.swiftdeps",
+    "swiftmodule" : "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/build/Build/Intermediates.noindex/ios-app-v2.build/Debug-iphoneos/ios-app-v2.build/Objects-normal/arm64/QuestionView~partial.swiftmodule"
+  }
+}

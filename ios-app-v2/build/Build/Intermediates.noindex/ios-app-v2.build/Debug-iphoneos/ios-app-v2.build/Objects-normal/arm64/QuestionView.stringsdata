@@ -1,0 +1,32 @@
+{
+  "source": "/Users/kirylleonau/Documents/0 AI/Trading/ios-app-v2/ios-app-v2/Views/QuestionView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "✓",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 28
+        }
+      },
+      {
+        "comment": "",
+        "key": "⚠",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 40
+        }
+      },
+      {
+        "comment": "",
+        "key": "✕",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 52
+        }
+      }
+    ]
+  },
+  "version": 1
+}

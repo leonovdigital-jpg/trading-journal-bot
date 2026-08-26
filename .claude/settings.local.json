@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(xcrun xctrace *)",
+      "Bash(xcrun instruments *)",
+      "Bash(awk '{print $NF}')"
+    ]
+  }
+}

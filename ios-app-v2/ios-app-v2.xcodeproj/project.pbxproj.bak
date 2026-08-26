@@ -1,0 +1,46 @@
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+		001A00010000001 = {isa = PBXBuildFile; fileRef = 001A00010000000; };
+		001A00010000003 = {isa = PBXBuildFile; fileRef = 001A00010000002; };
+		001A00010000005 = {isa = PBXBuildFile; fileRef = 001A00010000004; };
+		001A00010000007 = {isa = PBXBuildFile; fileRef = 001A00010000006; };
+		001A00010000009 = {isa = PBXBuildFile; fileRef = 001A00010000008; };
+		001A0001000000B = {isa = PBXBuildFile; fileRef = 001A0001000000A; };
+		001A0001000000D = {isa = PBXBuildFile; fileRef = 001A0001000000C; };
+		001A0001000000F = {isa = PBXBuildFile; fileRef = 001A0001000000E; };
+		001A00010000011 = {isa = PBXBuildFile; fileRef = 001A00010000010; };
+		001A00010000013 = {isa = PBXBuildFile; fileRef = 001A00010000012; };
+		001A00010000000 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		001A00010000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistView.swift; sourceTree = "<group>"; };
+		001A00010000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestionView.swift; sourceTree = "<group>"; };
+		001A00010000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LightIndicator.swift; sourceTree = "<group>"; };
+		001A00010000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Question.swift; sourceTree = "<group>"; };
+		001A0001000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		001A0001000000C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoggerService.swift; sourceTree = "<group>"; };
+		001A0001000000E = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		001A00010000012 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		001A00010000014 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "ios-app-v2.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		001A00010000100 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ( ); runOnlyForDeploymentPostprocessing = 0; };
+		001A00010000200 = {isa = PBXGroup; children = (001A00010000000, 001A00010000300, 001A00010000400, 001A00010000500, 001A0001000000E, 001A00010000012); name = "ios-app-v2"; path = "ios-app-v2"; sourceTree = "<group>"; };
+		001A00010000300 = {isa = PBXGroup; children = (001A00010000008, 001A0001000000A); name = Models; path = Models; sourceTree = "<group>"; };
+		001A00010000400 = {isa = PBXGroup; children = (001A00010000002, 001A00010000004, 001A00010000006); name = Views; path = Views; sourceTree = "<group>"; };
+		001A00010000500 = {isa = PBXGroup; children = (001A0001000000C); name = Utils; path = Utils; sourceTree = "<group>"; };
+		001A00010000700 = {isa = PBXGroup; children = (001A00010000014); name = Products; sourceTree = "<group>"; };
+		001A00010000800 = {isa = PBXNativeTarget; buildConfigurationList = 001A00010000A00; buildPhases = (001A00010000F00, 001A00010000100, 001A00010000G00); buildRules = ( ); dependencies = ( ); name = "ios-app-v2"; productName = "ios-app-v2"; productReference = 001A00010000014; productType = "com.apple.product-type.application"; };
+		001A00010000900 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 1540; LastUpgradeCheck = 1540; TargetAttributes = {001A00010000800 = {CreatedOnToolsVersion = 15.4; }; }; }; buildConfigurationList = 001A00010000B00; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = 001A00010000C00; minimumSwiftVersion = 5.0; productRefGroup = 001A00010000700; projectDirPath = ""; projectRoot = ""; targets = (001A00010000800); };
+		001A00010000A00 = {isa = XCConfigurationList; buildConfigurations = (001A00010000D00, 001A00010000E00); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		001A00010000B00 = {isa = XCConfigurationList; buildConfigurations = (001A00010000H00, 001A00010000I00); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		001A00010000C00 = {isa = PBXGroup; children = (001A00010000200, 001A00010000700); sourceTree = "<group>"; };
+		001A00010000D00 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CODE_SIGNING_REQUIRED = NO; CODE_SIGN_IDENTITY = ""; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "ios-app-v2/Info.plist"; INFOPLIST_KEY_CFBundleDisplayName = "Trading Checklist"; IPHONEOS_DEPLOYMENT_TARGET = 14.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 1.0; MODULE_NAME = ios_app_v2; PRODUCT_BUNDLE_IDENTIFIER = "com.leonau.ios-app-v2"; PRODUCT_MODULE_NAME = ios_app_v2; PRODUCT_NAME = "ios-app-v2"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.9; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		001A00010000E00 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CODE_SIGNING_REQUIRED = NO; CODE_SIGN_IDENTITY = ""; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "ios-app-v2/Info.plist"; INFOPLIST_KEY_CFBundleDisplayName = "Trading Checklist"; IPHONEOS_DEPLOYMENT_TARGET = 14.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 1.0; MODULE_NAME = ios_app_v2; PRODUCT_BUNDLE_IDENTIFIER = "com.leonau.ios-app-v2"; PRODUCT_MODULE_NAME = ios_app_v2; PRODUCT_NAME = "ios-app-v2"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.9; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+		001A00010000F00 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (001A00010000001, 001A00010000003, 001A00010000005, 001A00010000007, 001A00010000009, 001A0001000000B, 001A0001000000D); runOnlyForDeploymentPostprocessing = 0; };
+		001A00010000G00 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (001A00010000011); runOnlyForDeploymentPostprocessing = 0; };
+		001A00010000H00 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_TESTABILITY = YES; GCC_DYNAMIC_NO_PIC = NO; GCC_NO_COMMON_BLOCKS = YES; GCC_OPTIMIZATION_LEVEL = 0; GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)"); IPHONEOS_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE; MTL_FAST_MATH = YES; ONLY_ACTIVE_ARCH = YES; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 5.9; }; name = Debug; };
+		001A00010000I00 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = YES; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; GCC_NO_COMMON_BLOCKS = YES; GCC_OPTIMIZATION_LEVEL = fast; GCC_PREPROCESSOR_DEFINITIONS = ("NDEBUG=1"); IPHONEOS_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; MTL_FAST_MATH = YES; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.9; VALIDATE_PRODUCT = YES; }; name = Release; };
+	};
+	rootObject = 001A00010000900;
+}

@@ -1,0 +1,16 @@
+{
+  "name": "checklist-app",
+  "version": "1.0.0",
+  "description": "Pre-trade checklist for Match Trader",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.6",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5"
+  }
+}
