@@ -42,59 +42,73 @@ bot.start((ctx) => {
 });
 
 bot.on('text', async (ctx) => {
-  const chatId = ctx.chat.id;
-  const text = ctx.message.text;
-  const state = userStates.get(chatId) || {};
+  try {
+    const chatId = ctx.chat.id;
+    const text = ctx.message.text;
+    const state = userStates.get(chatId) || {};
 
-  const links = text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+\//g) || [];
+    console.log(`📥 Text from user ${chatId}: ${text.substring(0, 50)}...`);
 
-  if (links.length > 0 && (!state.step || state.step === 'collecting_links')) {
-    state.links = links;
-    state.step = 'links_ready';
-    userStates.set(chatId, state);
+    const links = text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+\//g) || [];
+    console.log(`🔗 Found ${links.length} links:`, links);
 
-    const tfNames = ['1-5', '1h', '4h', '1d', 'DXY 1h', 'DXY 4h', 'DXY 1d'];
-    const display = links.map((_, i) => `${i+1}. ${tfNames[i] || `Link ${i+1}`}`).join('\n');
+    if (links.length > 0 && (!state.step || state.step === 'collecting_links')) {
+      console.log(`✅ Processing links, current step: ${state.step || 'new'}`);
 
-    ctx.reply(`✅ Получено ${links.length} ссылок:\n\n${display}\n\nДалее → выбери актив`);
+      state.links = links;
+      state.step = 'links_ready';
+      userStates.set(chatId, state);
 
-    state.step = 'waiting_asset';
-    userStates.set(chatId, state);
+      const tfNames = ['1-5', '1h', '4h', '1d', 'DXY 1h', 'DXY 4h', 'DXY 1d'];
+      const display = links.map((_, i) => `${i+1}. ${tfNames[i] || `Link ${i+1}`}`).join('\n');
 
-    ctx.reply('Какой актив?', {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: 'USDCHF', callback_data: 'asset_USDCHF' }],
-          [{ text: 'UK100', callback_data: 'asset_UK100' }],
-          [{ text: 'US30', callback_data: 'asset_US30' }]
-        ]
-      }
-    });
-    return;
-  }
+      await ctx.reply(`✅ Получено ${links.length} ссылок:\n\n${display}\n\nДалее → выбери актив`);
+      console.log(`📤 Sent links confirmation`);
 
-  if (state.step === 'waiting_thoughts') {
-    state.thoughts = text;
+      state.step = 'waiting_asset';
+      userStates.set(chatId, state);
 
-    await ctx.reply('⏳ Загружаю в журнал...');
-
-    const sheetData = {
-      dateTime: new Date().toLocaleString('ru-RU'),
-      day: new Date().toLocaleDateString('ru-RU', { weekday: 'long' }),
-      session: state.session,
-      pair: state.asset,
-      thoughts: state.thoughts,
-      position: state.position
-    };
-
-    const success = await uploadToGoogleSheets(sheetData, state.links);
-
-    if (success) {
-      await ctx.reply('✅ Сделка записана в журнал!\n\nДля новой сделки отправь ссылки');
-      userStates.delete(chatId);
-    } else {
-      await ctx.reply('❌ Ошибка. Попробуй ещё раз.');
+      await ctx.reply('Какой актив?', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'USDCHF', callback_data: 'asset_USDCHF' }],
+            [{ text: 'UK100', callback_data: 'asset_UK100' }],
+            [{ text: 'US30', callback_data: 'asset_US30' }]
+          ]
+        }
+      });
+      console.log(`📤 Sent asset selection`);
+      return;
     }
+
+    if (state.step === 'waiting_thoughts') {
+      console.log(`💭 Processing thoughts`);
+      state.thoughts = text;
+
+      await ctx.reply('⏳ Загружаю в журнал...');
+
+      const sheetData = {
+        dateTime: new Date().toLocaleString('ru-RU'),
+        day: new Date().toLocaleDateString('ru-RU', { weekday: 'long' }),
+        session: state.session,
+        pair: state.asset,
+        thoughts: state.thoughts,
+        position: state.position
+      };
+
+      const success = await uploadToGoogleSheets(sheetData, state.links);
+
+      if (success) {
+        await ctx.reply('✅ Сделка записана в журнал!\n\nДля новой сделки отправь ссылки');
+        userStates.delete(chatId);
+      } else {
+        await ctx.reply('❌ Ошибка. Попробуй ещё раз.');
+      }
+    } else {
+      console.log(`⏭️ No action taken. Current state: ${JSON.stringify(state)}`);
+    }
+  } catch (err) {
+    console.error('❌ Error in text handler:', err.message, err.stack);
   }
 });
 
