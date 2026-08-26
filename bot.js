@@ -147,6 +147,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 app.post('/bot', (req, res) => {
+  console.log('📨 Incoming update:', JSON.stringify(req.body, null, 2));
   bot.handleUpdate(req.body);
   res.sendStatus(200);
 });
