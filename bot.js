@@ -159,8 +159,10 @@ app.listen(PORT, async () => {
   try {
     await bot.telegram.setWebhook(webhookUrl);
     console.log(`🤖 Trade Journal Bot webhook set to ${webhookUrl}`);
+    const info = await bot.telegram.getWebhookInfo();
+    console.log(`📍 Webhook info:`, info);
   } catch (err) {
-    console.error('Webhook error:', err.message);
+    console.error('❌ Webhook error:', err.message);
   }
 
   console.log(`📡 Server listening on port ${PORT}`);
