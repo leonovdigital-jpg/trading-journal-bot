@@ -47,14 +47,8 @@ bot.on('text', async (ctx) => {
     const text = ctx.message.text;
     const state = userStates.get(chatId) || {};
 
-    console.log(`📥 Full text from user ${chatId}:`, text);
-
-    const links = text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+\//g) || [];
-    console.log(`🔗 Regex result (0 means no match):`, links);
-
-    // Try simpler regex
-    const links2 = text.match(/https:.*tradingview\.com\/x\/[a-zA-Z0-9]+/g) || [];
-    console.log(`🔗 Alternative regex:`, links2);
+    const links = text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+/g) || [];
+    console.log(`🔗 Found ${links.length} links:`, links);
 
     if (links.length > 0 && (!state.step || state.step === 'collecting_links')) {
       console.log(`✅ Processing links, current step: ${state.step || 'new'}`);
