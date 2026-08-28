@@ -35,10 +35,53 @@ async function uploadToGoogleSheets(data, links) {
   }
 }
 
+async function updateTradeResult(pair, result, risk, rr) {
+  try {
+    const takeStop = rr > 0 ? 'Take' : (rr < 0 ? 'Stop' : '');
+    const payload = {
+      action: 'updateTrade',
+      pair: pair,
+      result: result,
+      risk: risk,
+      rr: rr,
+      takeStop: takeStop
+    };
+
+    await axios.post(WEBHOOK_URL, payload);
+    return true;
+  } catch (error) {
+    console.error('Update error:', error.message);
+    return false;
+  }
+}
+
 bot.start((ctx) => {
   const chatId = ctx.chat.id;
   userStates.delete(chatId);
-  ctx.reply('👋 Привет! Начинай отправлять Share ссылки с TradingView:\n\n1️⃣ 1h\n2️⃣ 4h\n3️⃣ 1d\n4️⃣ DXY 1h (опционально)\n5️⃣ DXY 4h (опционально)\n6️⃣ DXY 1d (опционально)\n\nКогда закончил → напиши /ready');
+  ctx.reply('👋 Привет! Начинай отправлять Share ссылки с TradingView:\n\n1️⃣ 1h\n2️⃣ 4h\n3️⃣ 1d\n4️⃣ DXY 1h (опционально)\n5️⃣ DXY 4h (опционально)\n6️⃣ DXY 1d (опционально)\n\nКогда закончил → напиши /ready\n\n/closetrade - закрыть сделку');
+});
+
+bot.command('closetrade', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const state = userStates.get(chatId) || {};
+
+  if (!state.openTrades || state.openTrades.length === 0) {
+    await ctx.reply('❌ Нет открытых сделок');
+    return;
+  }
+
+  state.step = 'closing_select_trade';
+  userStates.set(chatId, state);
+
+  const buttons = state.openTrades.map((trade, idx) => [
+    { text: `${trade.pair} (${trade.session})`, callback_data: `close_trade_${idx}` }
+  ]);
+
+  buttons.push([{ text: '❌ Отмена', callback_data: 'close_cancel' }]);
+
+  await ctx.reply('Какую сделку закрываем?', {
+    reply_markup: { inline_keyboard: buttons }
+  });
 });
 
 bot.on('text', async (ctx) => {
@@ -48,11 +91,8 @@ bot.on('text', async (ctx) => {
     const state = userStates.get(chatId) || {};
 
     const links = text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+/g) || [];
-    console.log(`🔗 Found ${links.length} links:`, links);
 
     if (links.length > 0 && (!state.step || state.step === 'collecting_links')) {
-      console.log(`✅ Processing links, current step: ${state.step || 'new'}`);
-
       state.links = links;
       state.step = 'links_ready';
       userStates.set(chatId, state);
@@ -61,7 +101,6 @@ bot.on('text', async (ctx) => {
       const display = links.map((_, i) => `${i+1}. ${tfNames[i] || `Link ${i+1}`}`).join('\n');
 
       await ctx.reply(`✅ Получено ${links.length} ссылок:\n\n${display}\n\nДалее → выбери актив`);
-      console.log(`📤 Sent links confirmation`);
 
       state.step = 'waiting_asset';
       userStates.set(chatId, state);
@@ -75,14 +114,11 @@ bot.on('text', async (ctx) => {
           ]
         }
       });
-      console.log(`📤 Sent asset selection`);
       return;
     }
 
     if (state.step === 'waiting_thoughts') {
-      console.log(`💭 Processing thoughts`);
       state.thoughts = text;
-
       await ctx.reply('⏳ Загружаю в журнал...');
 
       const sheetData = {
@@ -97,13 +133,57 @@ bot.on('text', async (ctx) => {
       const success = await uploadToGoogleSheets(sheetData, state.links);
 
       if (success) {
-        await ctx.reply('✅ Сделка записана в журнал!\n\nДля новой сделки отправь ссылки');
-        userStates.delete(chatId);
+        if (!state.openTrades) state.openTrades = [];
+        state.openTrades.push({
+          pair: state.asset,
+          session: state.session,
+          dateTime: sheetData.dateTime
+        });
+
+        await ctx.reply('✅ Сделка открыта!\n\nДля новой отправь ссылки или /closetrade для закрытия');
+        state.step = 'idle';
+        userStates.set(chatId, state);
       } else {
         await ctx.reply('❌ Ошибка. Попробуй ещё раз.');
       }
-    } else {
-      console.log(`⏭️ No action taken. Current state: ${JSON.stringify(state)}`);
+    } else if (state.step === 'closing_result') {
+      state.result = text;
+      state.step = 'closing_risk';
+      userStates.set(chatId, state);
+
+      await ctx.reply('Какой Risk?', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '0.5', callback_data: 'risk_0.5' }],
+            [{ text: '1', callback_data: 'risk_1' }],
+            [{ text: 'Своё', callback_data: 'risk_custom' }]
+          ]
+        }
+      });
+    } else if (state.step === 'closing_risk_custom') {
+      state.risk = parseFloat(text);
+      state.step = 'closing_rr';
+      userStates.set(chatId, state);
+
+      await ctx.reply('Какой RR?');
+    } else if (state.step === 'closing_rr') {
+      const rr = parseFloat(text);
+      const tradeIdx = state.closingTradeIndex;
+      const trade = state.openTrades[tradeIdx];
+
+      await ctx.reply('⏳ Обновляю результат...');
+
+      const success = await updateTradeResult(trade.pair, state.result, state.risk, rr);
+
+      if (success) {
+        state.openTrades.splice(tradeIdx, 1);
+        await ctx.reply('✅ Результат записан!');
+      } else {
+        await ctx.reply('❌ Ошибка при обновлении.');
+      }
+
+      state.step = 'idle';
+      userStates.set(chatId, state);
     }
   } catch (err) {
     console.error('❌ Error in text handler:', err.message, err.stack);
@@ -148,6 +228,29 @@ bot.on('callback_query', async (ctx) => {
     userStates.set(chatId, state);
 
     await ctx.reply('Напиши свои мысли перед входом:');
+  } else if (data.startsWith('close_trade_')) {
+    const tradeIdx = parseInt(data.split('_')[2]);
+    state.closingTradeIndex = tradeIdx;
+    state.step = 'closing_result';
+    userStates.set(chatId, state);
+
+    const trade = state.openTrades[tradeIdx];
+    await ctx.reply(`✅ Закрываем: ${trade.pair}\n\nОтправь скрин результата:`);
+  } else if (data.startsWith('risk_')) {
+    if (data === 'risk_custom') {
+      state.step = 'closing_risk_custom';
+      userStates.set(chatId, state);
+      await ctx.reply('Введи Risk:');
+    } else {
+      state.risk = parseFloat(data.split('_')[1]);
+      state.step = 'closing_rr';
+      userStates.set(chatId, state);
+      await ctx.reply('Введи RR:');
+    }
+  } else if (data === 'close_cancel') {
+    state.step = 'idle';
+    userStates.set(chatId, state);
+    await ctx.reply('❌ Отменено');
   }
 
   await ctx.answerCbQuery();
