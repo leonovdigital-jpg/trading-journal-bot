@@ -55,6 +55,16 @@ async function updateTradeResult(pair, result, risk, rr) {
   }
 }
 
+async function getOpenTrades() {
+  try {
+    const response = await axios.get(WEBHOOK_URL + '?action=getOpenTrades');
+    return response.data.trades || [];
+  } catch (error) {
+    console.error('Get open trades error:', error.message);
+    return [];
+  }
+}
+
 bot.start((ctx) => {
   const chatId = ctx.chat.id;
   userStates.delete(chatId);
@@ -65,15 +75,18 @@ bot.command('closetrade', async (ctx) => {
   const chatId = ctx.chat.id;
   const state = userStates.get(chatId) || {};
 
-  if (!state.openTrades || state.openTrades.length === 0) {
+  const openTrades = await getOpenTrades();
+
+  if (!openTrades || openTrades.length === 0) {
     await ctx.reply('❌ Нет открытых сделок');
     return;
   }
 
+  state.openTrades = openTrades;
   state.step = 'closing_select_trade';
   userStates.set(chatId, state);
 
-  const buttons = state.openTrades.map((trade, idx) => [
+  const buttons = openTrades.map((trade, idx) => [
     { text: `${trade.pair} (${trade.session})`, callback_data: `close_trade_${idx}` }
   ]);
 
