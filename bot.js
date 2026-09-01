@@ -7,6 +7,18 @@ const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbyrKuqc4_RwXsu2y_kCZVLbD6BUFMnqyzuokQun-4J13aWQlc96pgME2Ai3vef_oYVhQw/exec';
 
 const userStates = new Map();
+let globalOpenTrades = [];
+
+async function initializeOpenTrades() {
+  try {
+    const response = await axios.post(WEBHOOK_URL, { action: 'getOpenTrades' });
+    globalOpenTrades = response.data.trades || [];
+    console.log(`✅ Loaded ${globalOpenTrades.length} open trades`);
+  } catch (error) {
+    console.error('Failed to initialize open trades:', error.message);
+    globalOpenTrades = [];
+  }
+}
 
 async function uploadToGoogleSheets(data, links) {
   try {
@@ -75,18 +87,16 @@ bot.command('closetrade', async (ctx) => {
   const chatId = ctx.chat.id;
   const state = userStates.get(chatId) || {};
 
-  const openTrades = await getOpenTrades();
-
-  if (!openTrades || openTrades.length === 0) {
+  if (!globalOpenTrades || globalOpenTrades.length === 0) {
     await ctx.reply('❌ Нет открытых сделок');
     return;
   }
 
-  state.openTrades = openTrades;
+  state.openTrades = globalOpenTrades;
   state.step = 'closing_select_trade';
   userStates.set(chatId, state);
 
-  const buttons = openTrades.map((trade, idx) => [
+  const buttons = globalOpenTrades.map((trade, idx) => [
     { text: `${trade.pair} (${trade.session})`, callback_data: `close_trade_${idx}` }
   ]);
 
@@ -146,8 +156,7 @@ bot.on('text', async (ctx) => {
       const success = await uploadToGoogleSheets(sheetData, state.links);
 
       if (success) {
-        if (!state.openTrades) state.openTrades = [];
-        state.openTrades.push({
+        globalOpenTrades.push({
           pair: state.asset,
           session: state.session,
           dateTime: sheetData.dateTime
@@ -189,7 +198,7 @@ bot.on('text', async (ctx) => {
       const success = await updateTradeResult(trade.pair, state.result, state.risk, rr);
 
       if (success) {
-        state.openTrades.splice(tradeIdx, 1);
+        globalOpenTrades.splice(tradeIdx, 1);
         await ctx.reply('✅ Результат записан!');
       } else {
         await ctx.reply('❌ Ошибка при обновлении.');
@@ -299,6 +308,7 @@ app.listen(PORT, async () => {
     console.error('❌ Webhook error:', err.message);
   }
 
+  await initializeOpenTrades();
   console.log(`📡 Server listening on port ${PORT}`);
 });
 
