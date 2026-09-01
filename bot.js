@@ -4,7 +4,7 @@ const axios = require('axios');
 const express = require('express');
 
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
-const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwJZUFV2oMIVz0gx0f6O8zRq4nFUeTA9q4-hr8JUf00ompMlYM1X9_G1Us4r9x4L4_MlQ/exec';
+const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbyrKuqc4_RwXsu2y_kCZVLbD6BUFMnqyzuokQun-4J13aWQlc96pgME2Ai3vef_oYVhQw/exec';
 
 const userStates = new Map();
 
