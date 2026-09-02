@@ -13,11 +13,25 @@ async function initializeOpenTrades() {
   try {
     const response = await axios.post(WEBHOOK_URL, { action: 'getOpenTrades' });
     globalOpenTrades = response.data.trades || [];
-    console.log(`✅ Loaded ${globalOpenTrades.length} open trades`);
+
+    // Фильтруем только сегодняшние сделки (где есть дата)
+    const today = new Date().toLocaleDateString('ru-RU');
+    globalOpenTrades = globalOpenTrades.filter(trade => {
+      if (!trade.dateTime) return false;
+      return trade.dateTime.startsWith(today);
+    });
+
+    console.log(`✅ Loaded ${globalOpenTrades.length} open trades for today`);
   } catch (error) {
     console.error('Failed to initialize open trades:', error.message);
     globalOpenTrades = [];
   }
+}
+
+function extractTime(dateTimeStr) {
+  if (!dateTimeStr) return '';
+  const parts = dateTimeStr.split(', ');
+  return parts[1] || '';
 }
 
 async function uploadToGoogleSheets(data, links) {
@@ -69,7 +83,7 @@ async function updateTradeResult(pair, result, risk, rr) {
 
 async function getOpenTrades() {
   try {
-    const response = await axios.get(WEBHOOK_URL + '?action=getOpenTrades');
+    const response = await axios.post(WEBHOOK_URL, { action: 'getOpenTrades' });
     return response.data.trades || [];
   } catch (error) {
     console.error('Get open trades error:', error.message);
@@ -257,7 +271,8 @@ bot.on('callback_query', async (ctx) => {
     userStates.set(chatId, state);
 
     const trade = state.openTrades[tradeIdx];
-    await ctx.reply(`✅ Закрываем: ${trade.pair}\n\nОтправь скрин результата:`);
+    const time = extractTime(trade.dateTime);
+    await ctx.reply(`✅ Закрываем: ${trade.pair} (${trade.session})\n📍 Опубликовано: ${time}\n\nОтправь скрин результата:`);
   } else if (data.startsWith('risk_')) {
     if (data === 'risk_custom') {
       state.step = 'closing_risk_custom';
