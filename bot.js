@@ -7,32 +7,6 @@ const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbyrKuqc4_RwXsu2y_kCZVLbD6BUFMnqyzuokQun-4J13aWQlc96pgME2Ai3vef_oYVhQw/exec';
 
 const userStates = new Map();
-let globalOpenTrades = [];
-
-async function initializeOpenTrades() {
-  try {
-    const response = await axios.post(WEBHOOK_URL, { action: 'getOpenTrades' });
-    globalOpenTrades = response.data.trades || [];
-
-    // Фильтруем только сегодняшние сделки (где есть дата)
-    const today = new Date().toLocaleDateString('ru-RU');
-    globalOpenTrades = globalOpenTrades.filter(trade => {
-      if (!trade.dateTime) return false;
-      return trade.dateTime.startsWith(today);
-    });
-
-    console.log(`✅ Loaded ${globalOpenTrades.length} open trades for today`);
-  } catch (error) {
-    console.error('Failed to initialize open trades:', error.message);
-    globalOpenTrades = [];
-  }
-}
-
-function extractTime(dateTimeStr) {
-  if (!dateTimeStr) return '';
-  const parts = dateTimeStr.split(', ');
-  return parts[1] || '';
-}
 
 async function uploadToGoogleSheets(data, links) {
   try {
@@ -53,7 +27,11 @@ async function uploadToGoogleSheets(data, links) {
       dxySmt1d: links[6] || ''
     };
 
-    await axios.post(WEBHOOK_URL, payload);
+    const response = await axios.post(WEBHOOK_URL, payload);
+    if (!response.data || response.data.success !== true) {
+      console.error('Upload rejected by Sheets:', JSON.stringify(response.data).slice(0, 300));
+      return false;
+    }
     return true;
   } catch (error) {
     console.error('Upload error:', error.message);
@@ -61,19 +39,24 @@ async function uploadToGoogleSheets(data, links) {
   }
 }
 
-async function updateTradeResult(pair, result, risk, rr) {
+async function updateTradeResult(trade, result, risk, rr) {
   try {
     const takeStop = rr > 0 ? 'Take' : (rr < 0 ? 'Stop' : '');
     const payload = {
       action: 'updateTrade',
-      pair: pair,
+      row: trade.row,
+      pair: trade.pair,
       result: result,
       risk: risk,
       rr: rr,
       takeStop: takeStop
     };
 
-    await axios.post(WEBHOOK_URL, payload);
+    const response = await axios.post(WEBHOOK_URL, payload);
+    if (!response.data || response.data.success !== true) {
+      console.error('Update rejected by Sheets:', JSON.stringify(response.data).slice(0, 300));
+      return false;
+    }
     return true;
   } catch (error) {
     console.error('Update error:', error.message);
@@ -82,13 +65,21 @@ async function updateTradeResult(pair, result, risk, rr) {
 }
 
 async function getOpenTrades() {
-  try {
-    const response = await axios.post(WEBHOOK_URL, { action: 'getOpenTrades' });
-    return response.data.trades || [];
-  } catch (error) {
-    console.error('Get open trades error:', error.message);
-    return [];
+  const response = await axios.post(WEBHOOK_URL, { action: 'getOpenTrades' });
+  const data = response.data;
+
+  if (!data || data.success !== true) {
+    throw new Error('Sheets ответил: ' + JSON.stringify(data).slice(0, 200));
   }
+
+  const trades = data.trades || [];
+  const today = data.today;
+
+  return {
+    today: today,
+    todayTrades: trades.filter(t => t.date === today),
+    allTrades: trades
+  };
 }
 
 bot.start((ctx) => {
@@ -101,22 +92,41 @@ bot.command('closetrade', async (ctx) => {
   const chatId = ctx.chat.id;
   const state = userStates.get(chatId) || {};
 
-  if (!globalOpenTrades || globalOpenTrades.length === 0) {
-    await ctx.reply('❌ Нет открытых сделок');
+  let data;
+  try {
+    data = await getOpenTrades();
+  } catch (error) {
+    console.error('Get open trades error:', error.message);
+    await ctx.reply('❌ Не могу прочитать журнал: ' + error.message);
     return;
   }
 
-  state.openTrades = globalOpenTrades;
+  const useToday = data.todayTrades.length > 0;
+  const trades = useToday ? data.todayTrades : data.allTrades;
+
+  if (trades.length === 0) {
+    await ctx.reply('❌ В журнале нет незакрытых сделок (все строки уже с RR).');
+    return;
+  }
+
+  state.openTrades = trades;
   state.step = 'closing_select_trade';
   userStates.set(chatId, state);
 
-  const buttons = globalOpenTrades.map((trade, idx) => [
-    { text: `${trade.pair} (${trade.session})`, callback_data: `close_trade_${idx}` }
-  ]);
+  const buttons = trades.map((trade, idx) => [{
+    text: useToday
+      ? `${trade.pair} · ${trade.session} · ${trade.time}`
+      : `${trade.pair} · ${trade.date} ${trade.time}`,
+    callback_data: `close_trade_${idx}`
+  }]);
 
   buttons.push([{ text: '❌ Отмена', callback_data: 'close_cancel' }]);
 
-  await ctx.reply('Какую сделку закрываем?', {
+  const header = useToday
+    ? `Сделки за сегодня (${data.today}):`
+    : `За сегодня сделок нет. Все незакрытые:`;
+
+  await ctx.reply(header + '\n\nКакую закрываем?', {
     reply_markup: { inline_keyboard: buttons }
   });
 });
@@ -170,17 +180,11 @@ bot.on('text', async (ctx) => {
       const success = await uploadToGoogleSheets(sheetData, state.links);
 
       if (success) {
-        globalOpenTrades.push({
-          pair: state.asset,
-          session: state.session,
-          dateTime: sheetData.dateTime
-        });
-
-        await ctx.reply('✅ Сделка открыта!\n\nДля новой отправь ссылки или /closetrade для закрытия');
+        await ctx.reply('✅ Сделка открыта и записана в журнал!\n\nДля новой отправь ссылки или /closetrade для закрытия');
         state.step = 'idle';
         userStates.set(chatId, state);
       } else {
-        await ctx.reply('❌ Ошибка. Попробуй ещё раз.');
+        await ctx.reply('❌ Не записалось в таблицу. Попробуй ещё раз.');
       }
     } else if (state.step === 'closing_result') {
       state.result = text;
@@ -204,18 +208,28 @@ bot.on('text', async (ctx) => {
       await ctx.reply('Какой RR?');
     } else if (state.step === 'closing_rr') {
       const rr = parseFloat(text);
-      const tradeIdx = state.closingTradeIndex;
-      const trade = state.openTrades[tradeIdx];
+      const trade = (state.openTrades || [])[state.closingTradeIndex];
+
+      if (isNaN(rr)) {
+        await ctx.reply('Не понял RR. Введи число, например 1.8 или -0.5');
+        return;
+      }
+
+      if (!trade) {
+        state.step = 'idle';
+        userStates.set(chatId, state);
+        await ctx.reply('Список сделок потерялся (бот перезапускался). Набери /closetrade заново.');
+        return;
+      }
 
       await ctx.reply('⏳ Обновляю результат...');
 
-      const success = await updateTradeResult(trade.pair, state.result, state.risk, rr);
+      const success = await updateTradeResult(trade, state.result, state.risk, rr);
 
       if (success) {
-        globalOpenTrades.splice(tradeIdx, 1);
-        await ctx.reply('✅ Результат записан!');
+        await ctx.reply(`✅ Записано: ${trade.pair} · Risk ${state.risk} · RR ${rr}`);
       } else {
-        await ctx.reply('❌ Ошибка при обновлении.');
+        await ctx.reply('❌ Ошибка при обновлении таблицы.');
       }
 
       state.step = 'idle';
@@ -270,9 +284,14 @@ bot.on('callback_query', async (ctx) => {
     state.step = 'closing_result';
     userStates.set(chatId, state);
 
-    const trade = state.openTrades[tradeIdx];
-    const time = extractTime(trade.dateTime);
-    await ctx.reply(`✅ Закрываем: ${trade.pair} (${trade.session})\n📍 Опубликовано: ${time}\n\nОтправь скрин результата:`);
+    const trade = (state.openTrades || [])[tradeIdx];
+    if (!trade) {
+      await ctx.reply('Список устарел. Набери /closetrade заново.');
+      await ctx.answerCbQuery();
+      return;
+    }
+
+    await ctx.reply(`✅ Закрываем: ${trade.pair} (${trade.session})\n📍 Опубликовано: ${trade.date} в ${trade.time}\n\nОтправь скрин результата:`);
   } else if (data.startsWith('risk_')) {
     if (data === 'risk_custom') {
       state.step = 'closing_risk_custom';
@@ -323,7 +342,13 @@ app.listen(PORT, async () => {
     console.error('❌ Webhook error:', err.message);
   }
 
-  await initializeOpenTrades();
+  try {
+    const data = await getOpenTrades();
+    console.log(`✅ Sheets ok. Today ${data.today}: ${data.todayTrades.length} open, всего незакрытых ${data.allTrades.length}`);
+  } catch (err) {
+    console.error('❌ Sheets check failed:', err.message);
+  }
+
   console.log(`📡 Server listening on port ${PORT}`);
 });
 
