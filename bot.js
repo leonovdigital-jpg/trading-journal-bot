@@ -324,7 +324,7 @@ app.post('/bot', (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  const BOT_DOMAIN = process.env.RENDER_EXTERNAL_URL || 'https://trading-journal-bot.onrender.com';
+  const BOT_DOMAIN = process.env.RENDER_EXTERNAL_URL || 'https://trading-journal-bot-18r8.onrender.com';
   const webhookUrl = `${BOT_DOMAIN}/bot`;
 
   try {
