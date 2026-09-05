@@ -17,6 +17,7 @@ async function uploadToGoogleSheets(data, links) {
       pair: data.pair,
       thoughts: data.thoughts,
       position: data.position,
+      account: data.account,
       errors: '',
       rating: links[0] || '',
       screenshot1h: links[1] || '',
@@ -174,7 +175,8 @@ bot.on('text', async (ctx) => {
         session: state.session,
         pair: state.asset,
         thoughts: state.thoughts,
-        position: state.position
+        position: state.position,
+        account: state.account
       };
 
       const success = await uploadToGoogleSheets(sheetData, state.links);
@@ -274,6 +276,19 @@ bot.on('callback_query', async (ctx) => {
     });
   } else if (data.startsWith('pos_')) {
     state.position = data.replace('pos_', '');
+    state.step = 'waiting_account';
+    userStates.set(chatId, state);
+
+    await ctx.reply('Какой аккаунт?', {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'Instant', callback_data: 'acc_Instant' }],
+          [{ text: '100k challenge', callback_data: 'acc_100k challenge' }]
+        ]
+      }
+    });
+  } else if (data.startsWith('acc_')) {
+    state.account = data.replace('acc_', '');
     state.step = 'waiting_thoughts';
     userStates.set(chatId, state);
 
@@ -291,7 +306,8 @@ bot.on('callback_query', async (ctx) => {
       return;
     }
 
-    await ctx.reply(`✅ Закрываем: ${trade.pair} (${trade.session})\n📍 Опубликовано: ${trade.date} в ${trade.time}\n\nОтправь скрин результата:`);
+    const accountLine = trade.account ? `\n💼 Аккаунт: ${trade.account}` : '';
+    await ctx.reply(`✅ Закрываем: ${trade.pair} (${trade.session})\n📍 Опубликовано: ${trade.date} в ${trade.time}${accountLine}\n\nОтправь скрин результата:`);
   } else if (data.startsWith('risk_')) {
     if (data === 'risk_custom') {
       state.step = 'closing_risk_custom';
