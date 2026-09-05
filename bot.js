@@ -89,6 +89,11 @@ bot.start((ctx) => {
   ctx.reply('👋 Привет! Начинай отправлять Share ссылки с TradingView:\n\n1️⃣ 1h\n2️⃣ 4h\n3️⃣ 1d\n4️⃣ DXY 1h (опционально)\n5️⃣ DXY 4h (опционально)\n6️⃣ DXY 1d (опционально)\n\nКогда закончил → напиши /ready\n\n/closetrade - закрыть сделку');
 });
 
+bot.command('reset', async (ctx) => {
+  userStates.delete(ctx.chat.id);
+  await ctx.reply('🔄 Сброшено. Отправляй ссылки с TradingView.');
+});
+
 bot.command('closetrade', async (ctx) => {
   const chatId = ctx.chat.id;
   const state = userStates.get(chatId) || {};
@@ -140,7 +145,11 @@ bot.on('text', async (ctx) => {
 
     const links = text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+/g) || [];
 
-    if (links.length > 0 && (!state.step || state.step === 'collecting_links')) {
+    // Шаги, на которых бот ждёт именно текст — там ссылка означает не новую сделку
+    const awaitingText = ['waiting_thoughts', 'closing_result', 'closing_risk_custom', 'closing_rr']
+      .includes(state.step);
+
+    if (links.length > 0 && !awaitingText) {
       state.links = links;
       state.step = 'links_ready';
       userStates.set(chatId, state);
@@ -236,9 +245,14 @@ bot.on('text', async (ctx) => {
 
       state.step = 'idle';
       userStates.set(chatId, state);
+    } else if (['waiting_asset', 'waiting_session', 'waiting_position', 'waiting_account'].includes(state.step)) {
+      await ctx.reply('Нажми кнопку выше 👆 или /reset чтобы начать заново.');
+    } else {
+      await ctx.reply('Не понял. Отправь Share-ссылки с TradingView, или /closetrade чтобы закрыть сделку.');
     }
   } catch (err) {
     console.error('❌ Error in text handler:', err.message, err.stack);
+    await ctx.reply('❌ Ошибка: ' + err.message).catch(() => {});
   }
 });
 
