@@ -5,3 +5,4 @@ token.json
 screenshots/
 *.log
 .DS_Store
+.playwright-mcp/
