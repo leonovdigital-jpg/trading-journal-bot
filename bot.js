@@ -97,16 +97,16 @@ function fmtRR(n) {
   return Number(n).toFixed(2);
 }
 
-async function uploadToGoogleSheets(data, links) {
+async function uploadToGoogleSheets(trade, links) {
   try {
     const payload = {
       requestId: newRequestId(),
-      day: data.day,
-      session: data.session,
-      pair: data.pair,
-      thoughts: data.thoughts,
-      position: data.position,
-      accounts: data.accounts,
+      day: trade.day,
+      session: trade.session,
+      pair: trade.pair,
+      thoughts: trade.thoughts,
+      position: trade.position,
+      accounts: trade.accounts,
       errors: '',
       rating: links[0] || '',
       screenshot1h: links[1] || '',
@@ -117,12 +117,12 @@ async function uploadToGoogleSheets(data, links) {
       dxySmt1d: links[6] || ''
     };
 
-    const data = await sheetsPost(payload);
-    if (data.success !== true) {
-      console.error('Upload rejected by Sheets:', JSON.stringify(data).slice(0, 300));
+    const reply = await sheetsPost(payload);
+    if (reply.success !== true) {
+      console.error('Upload rejected by Sheets:', JSON.stringify(reply).slice(0, 300));
       return null;
     }
-    return data.data || {};
+    return reply.data || {};
   } catch (error) {
     console.error('Upload error:', error.message);
     return null;
@@ -169,6 +169,40 @@ async function getOpenTrades() {
     todayTrades: trades.filter(t => t.date === today),
     allTrades: trades
   };
+}
+
+async function getStats() {
+  const data = await sheetsPost({ action: 'getStats' });
+  if (!data || data.success !== true) {
+    throw new Error('Sheets ответил: ' + JSON.stringify(data).slice(0, 200));
+  }
+  return data.data;
+}
+
+function formatStats(stats) {
+  const [year, month] = stats.month.split('-').map(Number);
+  const monthName = new Date(Date.UTC(year, month - 1, 15))
+    .toLocaleDateString('ru-RU', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+  const lines = [`📊 ${monthName}`];
+
+  for (const p of stats.props) {
+    lines.push('');
+    if (p.startBalance === null) {
+      lines.push(`💼 ${p.name} — баланс не задан в Props`);
+      continue;
+    }
+    const balance = Number(p.currentBalance).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+    const start = Number(p.startBalance).toLocaleString('ru-RU', { maximumFractionDigits: 0 });
+    lines.push(`💼 ${p.name}: ${balance}$ (${start} ${p.pnlSince >= 0 ? '+' : '−'} ${Math.abs(p.pnlSince).toLocaleString('ru-RU', { maximumFractionDigits: 2 })})`);
+    lines.push(`   месяц: ${fmtMoney(p.monthUsd)} · ${fmtPct(p.monthPct)} · сделок ${p.monthTrades}` +
+      (p.monthTrades ? ` · winrate ${Math.round(p.monthWins / p.monthTrades * 100)}%` : '') +
+      (p.open ? ` · ⏳ открыто ${p.open}` : ''));
+  }
+
+  const total = stats.props.reduce((s, p) => s + (p.monthUsd || 0), 0);
+  lines.push('', `Σ за месяц: ${fmtMoney(total)}`);
+  return lines.join('\n');
 }
 
 /*** Клавиатуры ***/
@@ -266,12 +300,22 @@ async function finishClose(ctx, state) {
 
 bot.start((ctx) => {
   userStates.delete(ctx.chat.id);
-  ctx.reply('👋 Привет! Начинай отправлять Share ссылки с TradingView:\n\n1️⃣ 1-5m\n2️⃣ 1h\n3️⃣ 4h\n4️⃣ 1d\n5️⃣ DXY 1h (опционально)\n6️⃣ DXY 4h (опционально)\n7️⃣ DXY 1d (опционально)\n\n/closetrade — закрыть сделку\n/reset — сбросить диалог');
+  ctx.reply('👋 Привет! Начинай отправлять Share ссылки с TradingView:\n\n1️⃣ 1-5m\n2️⃣ 1h\n3️⃣ 4h\n4️⃣ 1d\n5️⃣ DXY 1h (опционально)\n6️⃣ DXY 4h (опционально)\n7️⃣ DXY 1d (опционально)\n\n/closetrade — закрыть сделку\n/stats — балансы и текущий месяц по пропам\n/reset — сбросить диалог');
 });
 
 bot.command('reset', async (ctx) => {
   userStates.delete(ctx.chat.id);
   await ctx.reply('🔄 Сброшено. Отправляй ссылки с TradingView.');
+});
+
+bot.command('stats', async (ctx) => {
+  try {
+    const stats = await getStats();
+    await ctx.reply(formatStats(stats));
+  } catch (error) {
+    console.error('Stats error:', error.message);
+    await ctx.reply('❌ Не могу прочитать статистику: ' + error.message);
+  }
 });
 
 bot.command('closetrade', async (ctx) => {
@@ -559,7 +603,13 @@ app.post('/bot', (req, res) => {
   res.sendStatus(200);
 });
 
-app.listen(PORT, async () => {
+// При require из тестов сервер не поднимаем — только экспортируем функции
+module.exports = {
+  sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
+  parseNumber, fmtMoney, fmtPct, fmtRR, formatStats
+};
+
+if (require.main === module) app.listen(PORT, async () => {
   const BOT_DOMAIN = process.env.RENDER_EXTERNAL_URL || 'https://trading-journal-bot-18r8.onrender.com';
   const webhookUrl = `${BOT_DOMAIN}/bot`;
 

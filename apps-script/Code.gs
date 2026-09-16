@@ -107,6 +107,7 @@ function doPost(e) {
     }
 
     if (data.action === 'getOpenTrades') return getOpenTrades(sheet);
+    if (data.action === 'getStats')      return getStats(ss, sheet);
     if (data.action === 'updateTrade')   return remember(cache, cacheKey, updateTradeResult(sheet, data));
     if (data.action === 'setup')         return runSetup(ss, sheet);
     if (data.action === 'dump')          return dumpSheet(sheet, data);
@@ -230,9 +231,10 @@ function ensurePropsSheet(ss) {
   return sheet;
 }
 
-function balanceFor(ss, propName, date) {
+// Баланс пропа, действующий на дату: последняя строка Props с «Действует с» <= date
+function balanceInfoFor(ss, propName, date) {
   var sheet = ss.getSheetByName(PROPS_SHEET);
-  if (!sheet || sheet.getLastRow() < 2) return null;
+  if (!sheet || sheet.getLastRow() < 2) return { balance: null, from: null };
 
   var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
   var when = (date instanceof Date) ? date : new Date();
@@ -252,7 +254,67 @@ function balanceFor(ss, propName, date) {
     }
   }
 
-  return best;
+  return { balance: best, from: bestDate };
+}
+
+function balanceFor(ss, propName, date) {
+  return balanceInfoFor(ss, propName, date).balance;
+}
+
+/*** Сводка для /stats в боте ***/
+
+function getStats(ss, sheet) {
+  var tz = ss.getSpreadsheetTimeZone();
+  var now = new Date();
+  var monthKey = Utilities.formatDate(now, tz, 'yyyy-MM');
+  var values = sheet.getDataRange().getValues();
+  var props = [];
+
+  for (var p = 0; p < PROPS.length; p++) {
+    var c = propCols(p);
+    var info = balanceInfoFor(ss, PROPS[p], now);
+    var stat = {
+      name: PROPS[p],
+      startBalance: info.balance,
+      since: info.from ? Utilities.formatDate(info.from, tz, 'dd.MM.yyyy') : null,
+      pnlSince: 0,
+      currentBalance: null,
+      monthUsd: 0,
+      monthPct: 0,
+      monthTrades: 0,
+      monthWins: 0,
+      open: 0
+    };
+
+    for (var i = 1; i < values.length; i++) {
+      var date = values[i][0];
+      if (!(date instanceof Date)) continue;
+      if (isEmpty(values[i][3])) continue;
+
+      var risk = values[i][c.risk - 1];
+      var usd  = values[i][c.usd - 1];
+      if (isEmpty(risk)) continue;
+
+      if (isEmpty(usd)) { stat.open++; continue; }
+
+      var usdN = toNumber(usd) || 0;
+      var pctN = toNumber(values[i][c.pct - 1]) || 0;
+
+      if (info.from && date >= info.from) stat.pnlSince += usdN;
+
+      if (Utilities.formatDate(date, tz, 'yyyy-MM') === monthKey) {
+        stat.monthUsd += usdN;
+        stat.monthPct += pctN;
+        stat.monthTrades++;
+        if (usdN > 0) stat.monthWins++;
+      }
+    }
+
+    if (info.balance !== null) stat.currentBalance = info.balance + stat.pnlSince;
+    props.push(stat);
+  }
+
+  return createResponse(true, 'stats', { month: monthKey, props: props });
 }
 
 /*** Формулы ***/
@@ -801,7 +863,7 @@ function buildStats(ss, tradesSheet) {
   var sheet = ss.getSheetByName(STATS_SHEET);
 
   if (sheet) {
-    sheet.getRange(1, 1, 2, sheet.getMaxColumns()).breakApart();
+    sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).breakApart();
     sheet.clear();
   } else {
     sheet = ss.insertSheet(STATS_SHEET, 0);
@@ -810,7 +872,53 @@ function buildStats(ss, tradesSheet) {
   var months = collectMonths(tradesSheet);
   if (months.length === 0) return 0;
 
-  // шапка
+  var colors = ['#1B5E20', '#0D47A1', '#4A148C', '#B71C1C', '#004D40'];
+
+  /* ---- Блок «Сейчас»: текущий баланс и текущий месяц по каждому пропу ---- */
+
+  var nowHead = ['Сейчас', 'Стартовый баланс', 'Действует с', 'P&L с этой даты', 'Текущий баланс',
+    'Этот месяц $', 'Этот месяц %', 'Сделок в месяце', 'Открыто'];
+  sheet.getRange(1, 1, 1, nowHead.length).setValues([nowHead])
+    .setFontWeight('bold').setBackground('#212121').setFontColor('white');
+
+  var monthStart = 'DATE(YEAR(TODAY()),MONTH(TODAY()),1)';
+  var thisMonth = name + '!$A:$A,">="&' + monthStart + ',' + name + '!$A:$A,"<"&EDATE(' + monthStart + ',1)';
+
+  for (var s = 0; s < PROPS.length; s++) {
+    var sr = 2 + s;
+    var sc = propCols(s);
+    var sUsd  = name + '!$' + a1col(sc.usd)  + ':$' + a1col(sc.usd);
+    var sPct  = name + '!$' + a1col(sc.pct)  + ':$' + a1col(sc.pct);
+    var sRisk = name + '!$' + a1col(sc.risk) + ':$' + a1col(sc.risk);
+    var propsMatch = PROPS_SHEET + '!$A:$A,$A' + sr;
+    var effDate = 'MAXIFS(' + PROPS_SHEET + '!$C:$C,' + propsMatch + ',' + PROPS_SHEET + '!$C:$C,"<="&TODAY())';
+
+    sheet.getRange(sr, 1).setValue(PROPS[s])
+      .setFontWeight('bold').setBackground(colors[s % colors.length]).setFontColor('white');
+    sheet.getRange(sr, 2).setFormula(loc(
+      '=IFERROR(SUMIFS(' + PROPS_SHEET + '!$B:$B,' + propsMatch + ',' + PROPS_SHEET + '!$C:$C,' + effDate + '),"")'));
+    sheet.getRange(sr, 3).setFormula(loc('=IFERROR(' + effDate + ',"")'));
+    sheet.getRange(sr, 4).setFormula(loc(
+      '=IF($C' + sr + '="","",SUMIFS(' + sUsd + ',' + name + '!$A:$A,">="&$C' + sr + '))'));
+    sheet.getRange(sr, 5).setFormula(loc('=IF($B' + sr + '="","",$B' + sr + '+$D' + sr + ')'));
+    sheet.getRange(sr, 6).setFormula(loc('=SUMIFS(' + sUsd + ',' + thisMonth + ')'));
+    sheet.getRange(sr, 7).setFormula(loc('=SUMIFS(' + sPct + ',' + thisMonth + ')'));
+    sheet.getRange(sr, 8).setFormula(loc('=COUNTIFS(' + thisMonth + ',' + sUsd + ',"<>")'));
+    sheet.getRange(sr, 9).setFormula(loc('=COUNTIFS(' + sRisk + ',"<>",' + sUsd + ',"")'));
+  }
+
+  var nowRows = PROPS.length;
+  sheet.getRange(2, 2, nowRows, 1).setNumberFormat('#,##0" $"');
+  sheet.getRange(2, 3, nowRows, 1).setNumberFormat('dd.MM.yyyy');
+  sheet.getRange(2, 4, nowRows, 1).setNumberFormat('+#,##0.00" $";-#,##0.00" $";0" $"');
+  sheet.getRange(2, 5, nowRows, 1).setNumberFormat('#,##0.00" $"').setFontWeight('bold');
+  sheet.getRange(2, 6, nowRows, 1).setNumberFormat('+#,##0.00" $";-#,##0.00" $";0" $"');
+  sheet.getRange(2, 7, nowRows, 1).setNumberFormat('+0.00"%";-0.00"%";0"%"').setFontWeight('bold');
+  sheet.getRange(2, 8, nowRows, 2).setNumberFormat('0');
+
+  /* ---- Помесячная таблица ---- */
+
+  var top = nowRows + 3;          // строка первой шапки помесячной таблицы
   var head1 = ['Месяц'];
   var head2 = [''];
 
@@ -822,37 +930,35 @@ function buildStats(ss, tradesSheet) {
   head1 = head1.concat(['Всего', '', '']);
   head2 = head2.concat(['Сделок', '$', 'Открыто']);
 
-  sheet.getRange(1, 1, 1, head1.length).setValues([head1]);
-  sheet.getRange(2, 1, 1, head2.length).setValues([head2]);
-
-  var colors = ['#1B5E20', '#0D47A1', '#4A148C', '#B71C1C', '#004D40'];
+  sheet.getRange(top, 1, 1, head1.length).setValues([head1]);
+  sheet.getRange(top + 1, 1, 1, head2.length).setValues([head2]);
 
   for (var i = 0; i < PROPS.length; i++) {
     var start = 2 + i * 5;
-    sheet.getRange(1, start, 1, 5).merge()
+    sheet.getRange(top, start, 1, 5).merge()
       .setHorizontalAlignment('center')
       .setFontWeight('bold')
       .setBackground(colors[i % colors.length])
       .setFontColor('white');
-    sheet.getRange(2, start, 1, 5)
+    sheet.getRange(top + 1, start, 1, 5)
       .setFontWeight('bold')
       .setBackground(colors[i % colors.length])
       .setFontColor('white');
   }
 
   var totalStart = 2 + PROPS.length * 5;
-  sheet.getRange(1, totalStart, 1, 3).merge()
+  sheet.getRange(top, totalStart, 1, 3).merge()
     .setHorizontalAlignment('center').setFontWeight('bold')
     .setBackground('#212121').setFontColor('white');
-  sheet.getRange(2, totalStart, 1, 3)
+  sheet.getRange(top + 1, totalStart, 1, 3)
     .setFontWeight('bold').setBackground('#212121').setFontColor('white');
 
-  sheet.getRange(1, 1, 2, 1).merge()
+  sheet.getRange(top, 1, 2, 1).merge()
     .setFontWeight('bold').setBackground('#212121').setFontColor('white')
     .setVerticalAlignment('middle').setHorizontalAlignment('center');
 
   // строки по месяцам
-  var firstDataRow = 3;
+  var firstDataRow = top + 2;
 
   for (var m = 0; m < months.length; m++) {
     var r = firstDataRow + m;
@@ -913,8 +1019,9 @@ function buildStats(ss, tradesSheet) {
   }
 
   sheet.getRange(firstDataRow, totalStart + 1, n, 1).setNumberFormat('#,##0.00" $"');
-  sheet.setColumnWidth(1, 130);
-  sheet.setFrozenRows(2);
+  sheet.setColumnWidth(1, 140);
+  for (var w = 2; w <= 9; w++) sheet.setColumnWidth(w, 115);
+  sheet.setFrozenRows(0);
   sheet.setFrozenColumns(1);
 
   return n;
