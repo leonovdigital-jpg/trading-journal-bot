@@ -30,7 +30,7 @@ async function fetchEcho(location, attempts = 6) {
   throw new Error('echo not ready: ' + last);
 }
 
-async function sheetsPost(payload, attempts = 2) {
+async function sheetsPost(payload, attempts = 3) {
   let lastError = null;
 
   for (let i = 1; i <= attempts; i++) {
@@ -196,13 +196,12 @@ function formatStats(stats) {
     const size = Number(p.accountSize).toLocaleString('ru-RU', { maximumFractionDigits: 0 });
     const vsSize = p.currentBalance - p.accountSize;
     lines.push(`💼 ${p.name}: ${balance}$ · аккаунт ${size}$ (${fmtPct(vsSize / p.accountSize * 100)})`);
-    lines.push(`   месяц: ${fmtMoney(p.monthUsd)} · ${fmtPct(p.monthPct)} · сделок ${p.monthTrades}` +
+    // месяц — от баланса: текущий − баланс на 1-е число (не сумма сделок журнала)
+    const monthStart = Number(p.monthStartBalance).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+    lines.push(`   месяц: ${fmtMoney(p.monthUsd)} · ${fmtPct(p.monthPct)} (с ${monthStart}$)` +
+      ` · сделок ${p.monthTrades}` +
       (p.monthTrades ? ` · winrate ${Math.round(p.monthWins / p.monthTrades * 100)}%` : '') +
       (p.open ? ` · ⏳ открыто ${p.open}` : ''));
-    // счёт и журнал расходятся — на счёте есть результат, которого нет в сделках журнала
-    if (typeof p.offJournal === 'number' && Math.abs(p.offJournal) >= 0.01) {
-      lines.push(`   ⚠️ не в журнале: ${fmtMoney(p.offJournal)}`);
-    }
   }
 
   const total = stats.props.reduce((s, p) => s + (p.monthUsd || 0), 0);
