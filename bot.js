@@ -188,13 +188,14 @@ function formatStats(stats) {
 
   for (const p of stats.props) {
     lines.push('');
-    if (p.startBalance === null) {
-      lines.push(`💼 ${p.name} — баланс не задан в Props`);
+    if (p.currentBalance === null) {
+      lines.push(`💼 ${p.name} — размер аккаунта не задан в Props`);
       continue;
     }
     const balance = Number(p.currentBalance).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
-    const start = Number(p.startBalance).toLocaleString('ru-RU', { maximumFractionDigits: 0 });
-    lines.push(`💼 ${p.name}: ${balance}$ (${start} ${p.pnlSince >= 0 ? '+' : '−'} ${Math.abs(p.pnlSince).toLocaleString('ru-RU', { maximumFractionDigits: 2 })})`);
+    const size = Number(p.accountSize).toLocaleString('ru-RU', { maximumFractionDigits: 0 });
+    const vsSize = p.currentBalance - p.accountSize;
+    lines.push(`💼 ${p.name}: ${balance}$ · аккаунт ${size}$ (${fmtPct(vsSize / p.accountSize * 100)})`);
     lines.push(`   месяц: ${fmtMoney(p.monthUsd)} · ${fmtPct(p.monthPct)} · сделок ${p.monthTrades}` +
       (p.monthTrades ? ` · winrate ${Math.round(p.monthWins / p.monthTrades * 100)}%` : '') +
       (p.open ? ` · ⏳ открыто ${p.open}` : ''));
@@ -319,7 +320,9 @@ bot.command('stats', async (ctx) => {
 });
 
 // /balance                → текущие балансы
-// /balance 100k 101250    → новый баланс пропа с сегодняшнего дня (история не пересчитывается)
+// /balance 100k 98369     → зафиксировать фактический баланс пропа на текущий момент.
+// Проценты по сделкам считаются от РАЗМЕРА аккаунта (лист Props) и не меняются;
+// фиксация влияет только на «текущий баланс» = фиксация + сделки после неё.
 bot.command('balance', async (ctx) => {
   try {
     const args = ctx.message.text.replace(/^\/balance(@\w+)?\s*/i, '').trim();
@@ -327,16 +330,18 @@ bot.command('balance', async (ctx) => {
 
     if (!args) {
       const stats = await getStats();
-      const lines = stats.props.map(p => p.startBalance === null
-        ? `• ${p.name}: не задан`
-        : `• ${p.name}: ${Number(p.currentBalance).toLocaleString('ru-RU')}$ (задан ${Number(p.startBalance).toLocaleString('ru-RU')}$ с ${p.since})`);
-      await ctx.reply(`Балансы сейчас:\n${lines.join('\n')}\n\nЧтобы поправить: /balance <проп> <сумма>\nНапример: /balance instant 50900\nБаланс начнёт действовать с сегодняшнего дня, старые сделки считаются по-прежнему.`);
+      const lines = stats.props.map(p => p.currentBalance === null
+        ? `• ${p.name}: размер аккаунта не задан`
+        : `• ${p.name}: ${Number(p.currentBalance).toLocaleString('ru-RU')}$` +
+          (p.snapshotAt ? ` (зафиксировано ${Number(p.snapshotBalance).toLocaleString('ru-RU')}$ ${p.snapshotAt}, после: ${fmtMoney(p.pnlSince)})`
+                        : ` (аккаунт ${Number(p.accountSize).toLocaleString('ru-RU')}$ + сделки)`));
+      await ctx.reply(`Балансы сейчас:\n${lines.join('\n')}\n\nЕсли на счёте другая сумма — зафиксируй факт:\n/balance <проп> <сумма>\nНапример: /balance instant 48789\nПроценты по сделкам от этого не меняются.`);
       return;
     }
 
     const m = args.match(/^(.+?)\s+([\d\s.,]+)$/);
     if (!m) {
-      await ctx.reply('Формат: /balance <проп> <сумма>\nНапример: /balance instant 50900');
+      await ctx.reply('Формат: /balance <проп> <сумма>\nНапример: /balance instant 48789');
       return;
     }
 
@@ -349,7 +354,7 @@ bot.command('balance', async (ctx) => {
       return;
     }
     if (amount === null || amount <= 0) {
-      await ctx.reply('Сумма должна быть положительным числом, например 50900');
+      await ctx.reply('Сумма должна быть положительным числом, например 48789');
       return;
     }
 
@@ -360,9 +365,7 @@ bot.command('balance', async (ctx) => {
     }
 
     const d = reply.data;
-    await ctx.reply(`✅ ${d.name}: ${Number(d.balance).toLocaleString('ru-RU')}$ с ${d.from.split('-').reverse().join('.')}` +
-      (d.replaced ? ' (обновил сегодняшнюю запись)' : '') +
-      '\n\nСделки с этой даты считаются от нового баланса, старые — от прежнего. Проверить: /stats');
+    await ctx.reply(`✅ ${d.name}: ${Number(d.balance).toLocaleString('ru-RU')}$ зафиксировано ${d.at}\n\nДальше баланс движется от этой суммы по закрытым сделкам. Проверить: /stats`);
   } catch (error) {
     console.error('Balance error:', error.message);
     await ctx.reply('❌ Ошибка: ' + error.message);

@@ -19,6 +19,8 @@ var COL_ACCOUNT_OLD = 20;  // T — аккаунт (историческое)
 var PROPS_SHEET = 'Props';
 var STATS_SHEET = 'Статистика';
 var PROPS_MAX_ROW = 50;
+var BALANCES_SHEET = 'Балансы';
+var BALANCES_MAX_ROW = 200;
 
 /*** Утилиты ***/
 
@@ -109,7 +111,8 @@ function doPost(e) {
     if (data.action === 'getOpenTrades') return getOpenTrades(sheet);
     if (data.action === 'getStats')      return getStats(ss, sheet);
     if (data.action === 'setBalance')    return remember(cache, cacheKey, setBalance(ss, data));
-    if (data.action === 'deleteBalanceRow') return deleteBalanceRow(ss, data);
+    if (data.action === 'undoBalance')   return undoBalance(ss, data);
+    if (data.action === 'deletePropsRow') return deletePropsRow(ss, data);
     if (data.action === 'updateTrade')   return remember(cache, cacheKey, updateTradeResult(sheet, data));
     if (data.action === 'setup')         return runSetup(ss, sheet);
     if (data.action === 'dump')          return dumpSheet(sheet, data);
@@ -263,8 +266,43 @@ function balanceFor(ss, propName, date) {
   return balanceInfoFor(ss, propName, date).balance;
 }
 
-// Новый баланс пропа с сегодняшней даты (или с data.date в формате yyyy-MM-dd).
-// Историю не трогаем: старые строки Props остаются, сделки до этой даты считаются от них.
+/*** Фактический баланс — лист «Балансы» ***/
+// Props = РАЗМЕР аккаунта (база для %), меняется только при смене аккаунта.
+// «Балансы» = фиксации фактического баланса с точным временем (/balance в боте).
+// Текущий баланс = последняя фиксация + сумма $ по сделкам, открытым ПОСЛЕ неё.
+
+function ensureBalancesSheet(ss) {
+  var sheet = ss.getSheetByName(BALANCES_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(BALANCES_SHEET);
+    sheet.getRange('A1:C1').setValues([['Проп', 'Баланс', 'Зафиксирован']])
+      .setFontWeight('bold').setBackground('#37474F').setFontColor('white');
+    sheet.setColumnWidth(1, 160);
+    sheet.setColumnWidth(3, 160);
+  }
+  sheet.getRange(2, 2, BALANCES_MAX_ROW, 1).setNumberFormat('#,##0.00');
+  sheet.getRange(2, 3, BALANCES_MAX_ROW, 1).setNumberFormat('dd.MM.yyyy HH:mm');
+  return sheet;
+}
+
+// Последняя фиксация баланса пропа не позже момента `when`
+function balanceSnapshotFor(ss, propName, when) {
+  var sheet = ss.getSheetByName(BALANCES_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+  var best = null;
+
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0]).trim().toLowerCase() !== String(propName).trim().toLowerCase()) continue;
+    var at = values[i][2];
+    if (!(at instanceof Date) || at > when) continue;
+    if (!best || at > best.at) best = { balance: Number(values[i][1]), at: at };
+  }
+  return best;
+}
+
+// /balance: фиксирует фактический баланс на текущий момент (или data.at — ISO-строка)
 function setBalance(ss, data) {
   var idx = propIndexByName(data.name);
   if (idx === -1) return createResponse(false, 'Неизвестный проп: ' + data.name);
@@ -272,38 +310,43 @@ function setBalance(ss, data) {
   var balance = toNumber(data.balance);
   if (balance === null || balance <= 0) return createResponse(false, 'Некорректный баланс: ' + data.balance);
 
+  var at = data.at ? new Date(data.at) : new Date();
+  if (isNaN(at.getTime())) return createResponse(false, 'Некорректное время: ' + data.at);
+
+  var sheet = ensureBalancesSheet(ss);
+  sheet.appendRow([PROPS[idx], balance, at]);
+  sheet.getRange(sheet.getLastRow(), 3).setNumberFormat('dd.MM.yyyy HH:mm');
+
   var tz = ss.getSpreadsheetTimeZone();
-  var from;
-  if (data.date) {
-    from = Utilities.parseDate(String(data.date), tz, 'yyyy-MM-dd');
-  } else {
-    from = Utilities.parseDate(Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd'), tz, 'yyyy-MM-dd');
-  }
-
-  var sheet = ensurePropsSheet(ss);
-  var values = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 1), 3).getValues();
-  var fromKey = Utilities.formatDate(from, tz, 'yyyy-MM-dd');
-
-  // та же дата для того же пропа — обновляем строку, а не плодим дубли
-  // (SUMIFS в формулах сложил бы два баланса)
-  for (var i = 0; i < values.length; i++) {
-    var sameProp = String(values[i][0]).trim().toLowerCase() === PROPS[idx].toLowerCase();
-    var sameDate = values[i][2] instanceof Date && Utilities.formatDate(values[i][2], tz, 'yyyy-MM-dd') === fromKey;
-    if (sameProp && sameDate) {
-      sheet.getRange(i + 2, 2).setValue(balance);
-      return createResponse(true, 'Balance updated', { name: PROPS[idx], balance: balance, from: fromKey, replaced: true });
-    }
-  }
-
-  sheet.appendRow([PROPS[idx], balance, from]);
-  sheet.getRange(sheet.getLastRow(), 3).setNumberFormat('dd.MM.yyyy');
-  sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).sort([{ column: 1 }, { column: 3 }]);
-
-  return createResponse(true, 'Balance set', { name: PROPS[idx], balance: balance, from: fromKey, replaced: false });
+  return createResponse(true, 'Balance set', {
+    name: PROPS[idx],
+    balance: balance,
+    at: Utilities.formatDate(at, tz, 'dd.MM.yyyy HH:mm')
+  });
 }
 
-// Откат ошибочного /balance: удаляет строку Props с данным пропом и датой
-function deleteBalanceRow(ss, data) {
+// Откат: удаляет последнюю фиксацию пропа
+function undoBalance(ss, data) {
+  var idx = propIndexByName(data.name);
+  if (idx === -1) return createResponse(false, 'Неизвестный проп: ' + data.name);
+
+  var sheet = ss.getSheetByName(BALANCES_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return createResponse(false, 'no snapshots');
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+  var bestRow = -1, bestAt = null;
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0]).trim().toLowerCase() !== PROPS[idx].toLowerCase()) continue;
+    if (values[i][2] instanceof Date && (!bestAt || values[i][2] > bestAt)) { bestAt = values[i][2]; bestRow = i + 2; }
+  }
+  if (bestRow === -1) return createResponse(false, 'no snapshots for ' + PROPS[idx]);
+
+  sheet.deleteRow(bestRow);
+  return createResponse(true, 'deleted', { name: PROPS[idx], row: bestRow });
+}
+
+// Служебное: удалить строку Props (размер аккаунта) по пропу и дате yyyy-MM-dd
+function deletePropsRow(ss, data) {
   var idx = propIndexByName(data.name);
   if (idx === -1) return createResponse(false, 'Неизвестный проп: ' + data.name);
 
@@ -333,11 +376,15 @@ function getStats(ss, sheet) {
 
   for (var p = 0; p < PROPS.length; p++) {
     var c = propCols(p);
-    var info = balanceInfoFor(ss, PROPS[p], now);
+    var size = balanceInfoFor(ss, PROPS[p], now);      // размер аккаунта
+    var snap = balanceSnapshotFor(ss, PROPS[p], now);   // последняя фиксация факта
+    var since = snap ? snap.at : size.from;             // с какого момента суммируем P&L
+
     var stat = {
       name: PROPS[p],
-      startBalance: info.balance,
-      since: info.from ? Utilities.formatDate(info.from, tz, 'dd.MM.yyyy') : null,
+      accountSize: size.balance,
+      snapshotBalance: snap ? snap.balance : null,
+      snapshotAt: snap ? Utilities.formatDate(snap.at, tz, 'dd.MM.yyyy HH:mm') : null,
       pnlSince: 0,
       currentBalance: null,
       monthUsd: 0,
@@ -361,7 +408,8 @@ function getStats(ss, sheet) {
       var usdN = toNumber(usd) || 0;
       var pctN = toNumber(values[i][c.pct - 1]) || 0;
 
-      if (info.from && date >= info.from) stat.pnlSince += usdN;
+      // после фиксации — строго позже её момента; без фиксации — от даты размера аккаунта
+      if (since && (snap ? date > since : date >= since)) stat.pnlSince += usdN;
 
       if (Utilities.formatDate(date, tz, 'yyyy-MM') === monthKey) {
         stat.monthUsd += usdN;
@@ -371,7 +419,8 @@ function getStats(ss, sheet) {
       }
     }
 
-    if (info.balance !== null) stat.currentBalance = info.balance + stat.pnlSince;
+    var base = snap ? snap.balance : size.balance;
+    if (base !== null) stat.currentBalance = base + stat.pnlSince;
     props.push(stat);
   }
 
@@ -615,7 +664,8 @@ function runSetup(ss, sheet) {
   var log = [];
 
   ensurePropsSheet(ss);
-  log.push('Props: ok');
+  ensureBalancesSheet(ss);
+  log.push('Props/Балансы: ok');
 
   log.push('Даты: ' + normalizeDates(ss, sheet) + ' строк пересчитано, пояс ' + ss.getSpreadsheetTimeZone());
 
@@ -939,13 +989,15 @@ function buildStats(ss, tradesSheet) {
 
   /* ---- Блок «Сейчас»: текущий баланс и текущий месяц по каждому пропу ---- */
 
-  var nowHead = ['Сейчас', 'Стартовый баланс', 'Действует с', 'P&L с этой даты', 'Текущий баланс',
-    'Этот месяц $', 'Этот месяц %', 'Сделок в месяце', 'Открыто'];
+  var nowHead = ['Сейчас', 'Размер аккаунта', 'Баланс зафиксирован', 'Когда', 'P&L после',
+    'Текущий баланс', 'Этот месяц $', 'Этот месяц %', 'Сделок в месяце', 'Открыто'];
   sheet.getRange(1, 1, 1, nowHead.length).setValues([nowHead])
     .setFontWeight('bold').setBackground('#212121').setFontColor('white');
 
   var monthStart = 'DATE(YEAR(TODAY()),MONTH(TODAY()),1)';
   var thisMonth = name + '!$A:$A,">="&' + monthStart + ',' + name + '!$A:$A,"<"&EDATE(' + monthStart + ',1)';
+  var P = PROPS_SHEET + '!';
+  var B = BALANCES_SHEET + '!';
 
   for (var s = 0; s < PROPS.length; s++) {
     var sr = 2 + s;
@@ -953,31 +1005,42 @@ function buildStats(ss, tradesSheet) {
     var sUsd  = name + '!$' + a1col(sc.usd)  + ':$' + a1col(sc.usd);
     var sPct  = name + '!$' + a1col(sc.pct)  + ':$' + a1col(sc.pct);
     var sRisk = name + '!$' + a1col(sc.risk) + ':$' + a1col(sc.risk);
-    var propsMatch = PROPS_SHEET + '!$A:$A,$A' + sr;
-    var effDate = 'MAXIFS(' + PROPS_SHEET + '!$C:$C,' + propsMatch + ',' + PROPS_SHEET + '!$C:$C,"<="&TODAY())';
+    var propsMatch = P + '$A:$A,$A' + sr;
+    var sizeDate = 'MAXIFS(' + P + '$C:$C,' + propsMatch + ',' + P + '$C:$C,"<="&TODAY())';
+    var snapAt   = 'MAXIFS(' + B + '$C:$C,' + B + '$A:$A,$A' + sr + ',' + B + '$C:$C,"<="&NOW())';
 
     sheet.getRange(sr, 1).setValue(PROPS[s])
       .setFontWeight('bold').setBackground(colors[s % colors.length]).setFontColor('white');
+    // B — размер аккаунта (база для %)
     sheet.getRange(sr, 2).setFormula(loc(
-      '=IFERROR(SUMIFS(' + PROPS_SHEET + '!$B:$B,' + propsMatch + ',' + PROPS_SHEET + '!$C:$C,' + effDate + '),"")'));
-    sheet.getRange(sr, 3).setFormula(loc('=IFERROR(' + effDate + ',"")'));
-    sheet.getRange(sr, 4).setFormula(loc(
-      '=IF($C' + sr + '="","",SUMIFS(' + sUsd + ',' + name + '!$A:$A,">="&$C' + sr + '))'));
-    sheet.getRange(sr, 5).setFormula(loc('=IF($B' + sr + '="","",$B' + sr + '+$D' + sr + ')'));
-    sheet.getRange(sr, 6).setFormula(loc('=SUMIFS(' + sUsd + ',' + thisMonth + ')'));
-    sheet.getRange(sr, 7).setFormula(loc('=SUMIFS(' + sPct + ',' + thisMonth + ')'));
-    sheet.getRange(sr, 8).setFormula(loc('=COUNTIFS(' + thisMonth + ',' + sUsd + ',"<>")'));
-    sheet.getRange(sr, 9).setFormula(loc('=COUNTIFS(' + sRisk + ',"<>",' + sUsd + ',"")'));
+      '=IFERROR(SUMIFS(' + P + '$B:$B,' + propsMatch + ',' + P + '$C:$C,' + sizeDate + '),"")'));
+    // D — момент последней фиксации ("" если фиксаций нет)
+    sheet.getRange(sr, 4).setFormula(loc('=IFERROR(IF(' + snapAt + '=0,"",' + snapAt + '),"")'));
+    // C — зафиксированный баланс
+    sheet.getRange(sr, 3).setFormula(loc(
+      '=IF($D' + sr + '="","",SUMIFS(' + B + '$B:$B,' + B + '$A:$A,$A' + sr + ',' + B + '$C:$C,$D' + sr + '))'));
+    // E — P&L после фиксации (или от даты размера аккаунта, если фиксаций нет)
+    sheet.getRange(sr, 5).setFormula(loc(
+      '=IF($D' + sr + '="",IFERROR(SUMIFS(' + sUsd + ',' + name + '!$A:$A,">="&' + sizeDate + '),0),' +
+      'SUMIFS(' + sUsd + ',' + name + '!$A:$A,">"&$D' + sr + '))'));
+    // F — текущий баланс
+    sheet.getRange(sr, 6).setFormula(loc(
+      '=IF($D' + sr + '="",IF($B' + sr + '="","",$B' + sr + '+$E' + sr + '),$C' + sr + '+$E' + sr + ')'));
+    sheet.getRange(sr, 7).setFormula(loc('=SUMIFS(' + sUsd + ',' + thisMonth + ')'));
+    sheet.getRange(sr, 8).setFormula(loc('=SUMIFS(' + sPct + ',' + thisMonth + ')'));
+    sheet.getRange(sr, 9).setFormula(loc('=COUNTIFS(' + thisMonth + ',' + sUsd + ',"<>")'));
+    sheet.getRange(sr, 10).setFormula(loc('=COUNTIFS(' + sRisk + ',"<>",' + sUsd + ',"")'));
   }
 
   var nowRows = PROPS.length;
   sheet.getRange(2, 2, nowRows, 1).setNumberFormat('#,##0" $"');
-  sheet.getRange(2, 3, nowRows, 1).setNumberFormat('dd.MM.yyyy');
-  sheet.getRange(2, 4, nowRows, 1).setNumberFormat('+#,##0.00" $";-#,##0.00" $";0" $"');
-  sheet.getRange(2, 5, nowRows, 1).setNumberFormat('#,##0.00" $"').setFontWeight('bold');
-  sheet.getRange(2, 6, nowRows, 1).setNumberFormat('+#,##0.00" $";-#,##0.00" $";0" $"');
-  sheet.getRange(2, 7, nowRows, 1).setNumberFormat('+0.00"%";-0.00"%";0"%"').setFontWeight('bold');
-  sheet.getRange(2, 8, nowRows, 2).setNumberFormat('0');
+  sheet.getRange(2, 3, nowRows, 1).setNumberFormat('#,##0.00" $"');
+  sheet.getRange(2, 4, nowRows, 1).setNumberFormat('dd.MM.yyyy HH:mm');
+  sheet.getRange(2, 5, nowRows, 1).setNumberFormat('+#,##0.00" $";-#,##0.00" $";0" $"');
+  sheet.getRange(2, 6, nowRows, 1).setNumberFormat('#,##0.00" $"').setFontWeight('bold');
+  sheet.getRange(2, 7, nowRows, 1).setNumberFormat('+#,##0.00" $";-#,##0.00" $";0" $"');
+  sheet.getRange(2, 8, nowRows, 1).setNumberFormat('+0.00"%";-0.00"%";0"%"').setFontWeight('bold');
+  sheet.getRange(2, 9, nowRows, 2).setNumberFormat('0');
 
   /* ---- Помесячная таблица ---- */
 
@@ -1083,7 +1146,7 @@ function buildStats(ss, tradesSheet) {
 
   sheet.getRange(firstDataRow, totalStart + 1, n, 1).setNumberFormat('#,##0.00" $"');
   sheet.setColumnWidth(1, 140);
-  for (var w = 2; w <= 9; w++) sheet.setColumnWidth(w, 115);
+  for (var w = 2; w <= 10; w++) sheet.setColumnWidth(w, 120);
   sheet.setFrozenRows(0);
   sheet.setFrozenColumns(1);
 
