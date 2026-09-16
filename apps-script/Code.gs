@@ -108,6 +108,8 @@ function doPost(e) {
 
     if (data.action === 'getOpenTrades') return getOpenTrades(sheet);
     if (data.action === 'getStats')      return getStats(ss, sheet);
+    if (data.action === 'setBalance')    return remember(cache, cacheKey, setBalance(ss, data));
+    if (data.action === 'deleteBalanceRow') return deleteBalanceRow(ss, data);
     if (data.action === 'updateTrade')   return remember(cache, cacheKey, updateTradeResult(sheet, data));
     if (data.action === 'setup')         return runSetup(ss, sheet);
     if (data.action === 'dump')          return dumpSheet(sheet, data);
@@ -261,6 +263,65 @@ function balanceFor(ss, propName, date) {
   return balanceInfoFor(ss, propName, date).balance;
 }
 
+// Новый баланс пропа с сегодняшней даты (или с data.date в формате yyyy-MM-dd).
+// Историю не трогаем: старые строки Props остаются, сделки до этой даты считаются от них.
+function setBalance(ss, data) {
+  var idx = propIndexByName(data.name);
+  if (idx === -1) return createResponse(false, 'Неизвестный проп: ' + data.name);
+
+  var balance = toNumber(data.balance);
+  if (balance === null || balance <= 0) return createResponse(false, 'Некорректный баланс: ' + data.balance);
+
+  var tz = ss.getSpreadsheetTimeZone();
+  var from;
+  if (data.date) {
+    from = Utilities.parseDate(String(data.date), tz, 'yyyy-MM-dd');
+  } else {
+    from = Utilities.parseDate(Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd'), tz, 'yyyy-MM-dd');
+  }
+
+  var sheet = ensurePropsSheet(ss);
+  var values = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 1), 3).getValues();
+  var fromKey = Utilities.formatDate(from, tz, 'yyyy-MM-dd');
+
+  // та же дата для того же пропа — обновляем строку, а не плодим дубли
+  // (SUMIFS в формулах сложил бы два баланса)
+  for (var i = 0; i < values.length; i++) {
+    var sameProp = String(values[i][0]).trim().toLowerCase() === PROPS[idx].toLowerCase();
+    var sameDate = values[i][2] instanceof Date && Utilities.formatDate(values[i][2], tz, 'yyyy-MM-dd') === fromKey;
+    if (sameProp && sameDate) {
+      sheet.getRange(i + 2, 2).setValue(balance);
+      return createResponse(true, 'Balance updated', { name: PROPS[idx], balance: balance, from: fromKey, replaced: true });
+    }
+  }
+
+  sheet.appendRow([PROPS[idx], balance, from]);
+  sheet.getRange(sheet.getLastRow(), 3).setNumberFormat('dd.MM.yyyy');
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).sort([{ column: 1 }, { column: 3 }]);
+
+  return createResponse(true, 'Balance set', { name: PROPS[idx], balance: balance, from: fromKey, replaced: false });
+}
+
+// Откат ошибочного /balance: удаляет строку Props с данным пропом и датой
+function deleteBalanceRow(ss, data) {
+  var idx = propIndexByName(data.name);
+  if (idx === -1) return createResponse(false, 'Неизвестный проп: ' + data.name);
+
+  var sheet = ss.getSheetByName(PROPS_SHEET);
+  var tz = ss.getSpreadsheetTimeZone();
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+
+  for (var i = values.length - 1; i >= 0; i--) {
+    var sameProp = String(values[i][0]).trim().toLowerCase() === PROPS[idx].toLowerCase();
+    var sameDate = values[i][2] instanceof Date && Utilities.formatDate(values[i][2], tz, 'yyyy-MM-dd') === String(data.date);
+    if (sameProp && sameDate) {
+      sheet.deleteRow(i + 2);
+      return createResponse(true, 'deleted', { name: PROPS[idx], date: data.date });
+    }
+  }
+  return createResponse(false, 'row not found');
+}
+
 /*** Сводка для /stats в боте ***/
 
 function getStats(ss, sheet) {
@@ -340,11 +401,13 @@ function pctFormula(row, propIndex) {
   var usd = '$' + a1col(c.usd) + row;
   var name = PROPS[propIndex].replace(/"/g, '""');
 
-  // баланс = последняя строка Props для этого пропа с датой «Действует с» <= даты сделки
-  return loc('=IF(' + usd + '="","",IFERROR(' + usd +
-    '/LOOKUP(2,ARRAYFORMULA(1/((' + PROPS_SHEET + '!$A$2:$A$' + PROPS_MAX_ROW + '="' + name + '")' +
-    '*(' + PROPS_SHEET + '!$C$2:$C$' + PROPS_MAX_ROW + '<=$A' + row + '))),' +
-    PROPS_SHEET + '!$B$2:$B$' + PROPS_MAX_ROW + ')*100,""))');
+  // баланс = строка Props этого пропа с максимальной датой «Действует с» <= даты сделки.
+  // MAXIFS + SUMIFS не зависят от порядка строк в Props (в отличие от LOOKUP).
+  var P = PROPS_SHEET + '!';
+  var effDate = 'MAXIFS(' + P + '$C:$C,' + P + '$A:$A,"' + name + '",' + P + '$C:$C,"<="&$A' + row + ')';
+  var balance = 'SUMIFS(' + P + '$B:$B,' + P + '$A:$A,"' + name + '",' + P + '$C:$C,' + effDate + ')';
+
+  return loc('=IF(' + usd + '="","",IFERROR(' + usd + '/' + balance + '*100,""))');
 }
 
 function rrFormula(row, propIndex) {

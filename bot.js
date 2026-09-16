@@ -300,7 +300,7 @@ async function finishClose(ctx, state) {
 
 bot.start((ctx) => {
   userStates.delete(ctx.chat.id);
-  ctx.reply('👋 Привет! Начинай отправлять Share ссылки с TradingView:\n\n1️⃣ 1-5m\n2️⃣ 1h\n3️⃣ 4h\n4️⃣ 1d\n5️⃣ DXY 1h (опционально)\n6️⃣ DXY 4h (опционально)\n7️⃣ DXY 1d (опционально)\n\n/closetrade — закрыть сделку\n/stats — балансы и текущий месяц по пропам\n/reset — сбросить диалог');
+  ctx.reply('👋 Привет! Начинай отправлять Share ссылки с TradingView:\n\n1️⃣ 1-5m\n2️⃣ 1h\n3️⃣ 4h\n4️⃣ 1d\n5️⃣ DXY 1h (опционально)\n6️⃣ DXY 4h (опционально)\n7️⃣ DXY 1d (опционально)\n\n/closetrade — закрыть сделку\n/stats — балансы и текущий месяц по пропам\n/balance — поправить баланс пропа\n/reset — сбросить диалог');
 });
 
 bot.command('reset', async (ctx) => {
@@ -315,6 +315,57 @@ bot.command('stats', async (ctx) => {
   } catch (error) {
     console.error('Stats error:', error.message);
     await ctx.reply('❌ Не могу прочитать статистику: ' + error.message);
+  }
+});
+
+// /balance                → текущие балансы
+// /balance 100k 101250    → новый баланс пропа с сегодняшнего дня (история не пересчитывается)
+bot.command('balance', async (ctx) => {
+  try {
+    const args = ctx.message.text.replace(/^\/balance(@\w+)?\s*/i, '').trim();
+    const props = await getProps();
+
+    if (!args) {
+      const stats = await getStats();
+      const lines = stats.props.map(p => p.startBalance === null
+        ? `• ${p.name}: не задан`
+        : `• ${p.name}: ${Number(p.currentBalance).toLocaleString('ru-RU')}$ (задан ${Number(p.startBalance).toLocaleString('ru-RU')}$ с ${p.since})`);
+      await ctx.reply(`Балансы сейчас:\n${lines.join('\n')}\n\nЧтобы поправить: /balance <проп> <сумма>\nНапример: /balance instant 50900\nБаланс начнёт действовать с сегодняшнего дня, старые сделки считаются по-прежнему.`);
+      return;
+    }
+
+    const m = args.match(/^(.+?)\s+([\d\s.,]+)$/);
+    if (!m) {
+      await ctx.reply('Формат: /balance <проп> <сумма>\nНапример: /balance instant 50900');
+      return;
+    }
+
+    const query = m[1].trim().toLowerCase();
+    const amount = parseNumber(m[2]);
+    const matches = props.filter(p => p.toLowerCase().includes(query));
+
+    if (matches.length !== 1) {
+      await ctx.reply(`Не понял, какой проп: «${m[1].trim()}». Доступны: ${props.join(', ')}`);
+      return;
+    }
+    if (amount === null || amount <= 0) {
+      await ctx.reply('Сумма должна быть положительным числом, например 50900');
+      return;
+    }
+
+    const reply = await sheetsPost({ action: 'setBalance', requestId: newRequestId(), name: matches[0], balance: amount });
+    if (!reply || reply.success !== true) {
+      await ctx.reply('❌ Не записалось: ' + (reply && reply.message));
+      return;
+    }
+
+    const d = reply.data;
+    await ctx.reply(`✅ ${d.name}: ${Number(d.balance).toLocaleString('ru-RU')}$ с ${d.from.split('-').reverse().join('.')}` +
+      (d.replaced ? ' (обновил сегодняшнюю запись)' : '') +
+      '\n\nСделки с этой даты считаются от нового баланса, старые — от прежнего. Проверить: /stats');
+  } catch (error) {
+    console.error('Balance error:', error.message);
+    await ctx.reply('❌ Ошибка: ' + error.message);
   }
 });
 
