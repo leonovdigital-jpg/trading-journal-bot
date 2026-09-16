@@ -199,6 +199,10 @@ function formatStats(stats) {
     lines.push(`   месяц: ${fmtMoney(p.monthUsd)} · ${fmtPct(p.monthPct)} · сделок ${p.monthTrades}` +
       (p.monthTrades ? ` · winrate ${Math.round(p.monthWins / p.monthTrades * 100)}%` : '') +
       (p.open ? ` · ⏳ открыто ${p.open}` : ''));
+    // счёт и журнал расходятся — на счёте есть результат, которого нет в сделках журнала
+    if (typeof p.offJournal === 'number' && Math.abs(p.offJournal) >= 0.01) {
+      lines.push(`   ⚠️ не в журнале: ${fmtMoney(p.offJournal)}`);
+    }
   }
 
   const total = stats.props.reduce((s, p) => s + (p.monthUsd || 0), 0);

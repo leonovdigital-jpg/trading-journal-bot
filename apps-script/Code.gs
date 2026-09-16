@@ -48,6 +48,17 @@ function propCols(i) {
   return { risk: base, usd: base + 1, pct: base + 2, rr: base + 3 };
 }
 
+// Момент закрытия по каждому пропу — скрытые колонки после «Итого $».
+// Нужен, чтобы сделка, открытая до фиксации баланса и закрытая после, попала
+// в «P&L после»: дата в колонке A — это момент открытия.
+function closeCol(i) {
+  return totalUsdCol() + 1 + i;
+}
+
+function lastDataCol() {
+  return closeCol(PROPS.length - 1);
+}
+
 function propIndexByName(name) {
   var needle = String(name || '').trim().toLowerCase();
   for (var i = 0; i < PROPS.length; i++) {
@@ -269,7 +280,8 @@ function balanceFor(ss, propName, date) {
 /*** Фактический баланс — лист «Балансы» ***/
 // Props = РАЗМЕР аккаунта (база для %), меняется только при смене аккаунта.
 // «Балансы» = фиксации фактического баланса с точным временем (/balance в боте).
-// Текущий баланс = последняя фиксация + сумма $ по сделкам, открытым ПОСЛЕ неё.
+// Текущий баланс = последняя фиксация + сумма $ по сделкам, ЗАКРЫТЫМ после неё
+// (момент закрытия — closeCol; если его нет, берётся дата открытия из A).
 
 function ensureBalancesSheet(ss) {
   var sheet = ss.getSheetByName(BALANCES_SHEET);
@@ -387,6 +399,8 @@ function getStats(ss, sheet) {
       snapshotAt: snap ? Utilities.formatDate(snap.at, tz, 'dd.MM.yyyy HH:mm') : null,
       pnlSince: 0,
       currentBalance: null,
+      journalUsd: 0,        // все $ по пропу с даты размера аккаунта
+      offJournal: null,     // (текущий − размер) − journalUsd: что на счёте есть, а в журнале нет
       monthUsd: 0,
       monthPct: 0,
       monthTrades: 0,
@@ -407,9 +421,12 @@ function getStats(ss, sheet) {
 
       var usdN = toNumber(usd) || 0;
       var pctN = toNumber(values[i][c.pct - 1]) || 0;
+      var closedRaw = values[i][closeCol(p) - 1];
+      var closedAt = closedRaw instanceof Date ? closedRaw : date;
 
       // после фиксации — строго позже её момента; без фиксации — от даты размера аккаунта
-      if (since && (snap ? date > since : date >= since)) stat.pnlSince += usdN;
+      if (since && (snap ? closedAt > since : closedAt >= since)) stat.pnlSince += usdN;
+      if (size.from && closedAt >= size.from) stat.journalUsd += usdN;
 
       if (Utilities.formatDate(date, tz, 'yyyy-MM') === monthKey) {
         stat.monthUsd += usdN;
@@ -421,6 +438,9 @@ function getStats(ss, sheet) {
 
     var base = snap ? snap.balance : size.balance;
     if (base !== null) stat.currentBalance = base + stat.pnlSince;
+    if (stat.currentBalance !== null && size.balance !== null) {
+      stat.offJournal = Math.round(((stat.currentBalance - size.balance) - stat.journalUsd) * 100) / 100;
+    }
     props.push(stat);
   }
 
@@ -630,6 +650,7 @@ function updateTradeResult(sheet, data) {
 
     var c = propCols(idx);
     sheet.getRange(row, c.usd).setValue(usd);
+    sheet.getRange(row, closeCol(idx)).setValue(new Date());
 
     if (!isEmpty(res.risk) && isEmpty(values[rowIndex][c.risk - 1])) {
       sheet.getRange(row, c.risk).setValue(toNumber(res.risk));
@@ -807,7 +828,7 @@ function ensureColumns(sheet, needed) {
 }
 
 function buildHeaders(sheet) {
-  ensureColumns(sheet, totalUsdCol() + 1);
+  ensureColumns(sheet, lastDataCol());
 
   // в шапке и в новом блоке не должно быть чужих правил проверки данных
   // (на O1 висел список Take/Stop, из-за него падала запись заголовка)
@@ -844,10 +865,16 @@ function buildHeaders(sheet) {
   sheet.getRange(1, total).setValue('Итого $')
     .setFontWeight('bold').setBackground('#212121').setFontColor('white');
 
+  for (var k = 0; k < PROPS.length; k++) {
+    sheet.getRange(1, closeCol(k)).setValue(PROPS[k] + ' закрыто')
+      .setFontWeight('normal').setBackground('#EEEEEE').setFontColor('#616161');
+  }
+
   // чистим хвост от прежней схемы (старые колонки U/V и т.п.)
-  var tail = sheet.getMaxColumns() - total;
+  var last = lastDataCol();
+  var tail = sheet.getMaxColumns() - last;
   if (tail > 0) {
-    sheet.getRange(1, total + 1, 1, tail).clearContent().setBackground(null);
+    sheet.getRange(1, last + 1, 1, tail).clearContent().setBackground(null);
   }
 }
 
@@ -965,7 +992,10 @@ function formatSheet(sheet) {
   sheet.getRange(2, totalUsdCol(), n, 1).setNumberFormat('#,##0.00" $"');
   sheet.setColumnWidth(totalUsdCol(), 100);
 
+  sheet.getRange(2, closeCol(0), n, PROPS.length).setNumberFormat('dd.MM.yyyy HH:mm');
+
   sheet.hideColumns(COL_TAKESTOP, 3);   // O:Q — историческая тройка
+  sheet.hideColumns(closeCol(0), PROPS.length);   // моменты закрытия — служебные
   sheet.setFrozenRows(1);
 }
 
@@ -990,7 +1020,7 @@ function buildStats(ss, tradesSheet) {
   /* ---- Блок «Сейчас»: текущий баланс и текущий месяц по каждому пропу ---- */
 
   var nowHead = ['Сейчас', 'Размер аккаунта', 'Баланс зафиксирован', 'Когда', 'P&L после',
-    'Текущий баланс', 'Этот месяц $', 'Этот месяц %', 'Сделок в месяце', 'Открыто'];
+    'Текущий баланс', 'Этот месяц $', 'Этот месяц %', 'Сделок в месяце', 'Открыто', 'Не в журнале'];
   sheet.getRange(1, 1, 1, nowHead.length).setValues([nowHead])
     .setFontWeight('bold').setBackground('#212121').setFontColor('white');
 
@@ -1005,6 +1035,8 @@ function buildStats(ss, tradesSheet) {
     var sUsd  = name + '!$' + a1col(sc.usd)  + ':$' + a1col(sc.usd);
     var sPct  = name + '!$' + a1col(sc.pct)  + ':$' + a1col(sc.pct);
     var sRisk = name + '!$' + a1col(sc.risk) + ':$' + a1col(sc.risk);
+    var sClose = name + '!$' + a1col(closeCol(s)) + ':$' + a1col(closeCol(s));
+    var sDate = name + '!$A:$A';
     var propsMatch = P + '$A:$A,$A' + sr;
     var sizeDate = 'MAXIFS(' + P + '$C:$C,' + propsMatch + ',' + P + '$C:$C,"<="&TODAY())';
     var snapAt   = 'MAXIFS(' + B + '$C:$C,' + B + '$A:$A,$A' + sr + ',' + B + '$C:$C,"<="&NOW())';
@@ -1019,10 +1051,17 @@ function buildStats(ss, tradesSheet) {
     // C — зафиксированный баланс
     sheet.getRange(sr, 3).setFormula(loc(
       '=IF($D' + sr + '="","",SUMIFS(' + B + '$B:$B,' + B + '$A:$A,$A' + sr + ',' + B + '$C:$C,$D' + sr + '))'));
+    // Сумма $ по сделкам, закрытым после момента `after` (сравнение `op`: ">" или ">=").
+    // Момент закрытия — служебная колонка; для старых строк без него — дата открытия.
+    function usdClosedAfter(op, after) {
+      return 'SUMIFS(' + sUsd + ',' + sClose + ',"' + op + '"&' + after + ')' +
+        '+SUMIFS(' + sUsd + ',' + sClose + ',"",' + sDate + ',"' + op + '"&' + after + ')';
+    }
+
     // E — P&L после фиксации (или от даты размера аккаунта, если фиксаций нет)
     sheet.getRange(sr, 5).setFormula(loc(
-      '=IF($D' + sr + '="",IFERROR(SUMIFS(' + sUsd + ',' + name + '!$A:$A,">="&' + sizeDate + '),0),' +
-      'SUMIFS(' + sUsd + ',' + name + '!$A:$A,">"&$D' + sr + '))'));
+      '=IF($D' + sr + '="",IFERROR(' + usdClosedAfter('>=', sizeDate) + ',0),' +
+      usdClosedAfter('>', '$D' + sr) + ')'));
     // F — текущий баланс
     sheet.getRange(sr, 6).setFormula(loc(
       '=IF($D' + sr + '="",IF($B' + sr + '="","",$B' + sr + '+$E' + sr + '),$C' + sr + '+$E' + sr + ')'));
@@ -1030,6 +1069,11 @@ function buildStats(ss, tradesSheet) {
     sheet.getRange(sr, 8).setFormula(loc('=SUMIFS(' + sPct + ',' + thisMonth + ')'));
     sheet.getRange(sr, 9).setFormula(loc('=COUNTIFS(' + thisMonth + ',' + sUsd + ',"<>")'));
     sheet.getRange(sr, 10).setFormula(loc('=COUNTIFS(' + sRisk + ',"<>",' + sUsd + ',"")'));
+    // K — чего нет в журнале: (текущий − размер аккаунта) − все $ журнала с даты размера.
+    // 0 = журнал полностью сходится со счётом; иначе — сделки на счёте, которых нет в журнале
+    sheet.getRange(sr, 11).setFormula(loc(
+      '=IF(OR($F' + sr + '="",$B' + sr + '=""),"",' +
+      '$F' + sr + '-$B' + sr + '-IFERROR(' + usdClosedAfter('>=', sizeDate) + ',0))'));
   }
 
   var nowRows = PROPS.length;
@@ -1041,6 +1085,7 @@ function buildStats(ss, tradesSheet) {
   sheet.getRange(2, 7, nowRows, 1).setNumberFormat('+#,##0.00" $";-#,##0.00" $";0" $"');
   sheet.getRange(2, 8, nowRows, 1).setNumberFormat('+0.00"%";-0.00"%";0"%"').setFontWeight('bold');
   sheet.getRange(2, 9, nowRows, 2).setNumberFormat('0');
+  sheet.getRange(2, 11, nowRows, 1).setNumberFormat('+#,##0.00" $";-#,##0.00" $";0" $"').setFontColor('#616161');
 
   /* ---- Помесячная таблица ---- */
 
@@ -1146,7 +1191,7 @@ function buildStats(ss, tradesSheet) {
 
   sheet.getRange(firstDataRow, totalStart + 1, n, 1).setNumberFormat('#,##0.00" $"');
   sheet.setColumnWidth(1, 140);
-  for (var w = 2; w <= 10; w++) sheet.setColumnWidth(w, 120);
+  for (var w = 2; w <= 11; w++) sheet.setColumnWidth(w, 120);
   sheet.setFrozenRows(0);
   sheet.setFrozenColumns(1);
 
