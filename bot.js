@@ -62,17 +62,31 @@ function newRequestId() {
 // чтобы не держать две копии. Fallback на случай недоступности Sheets.
 const DEFAULT_PROPS = ['Instant', '100k challenge', 'FundingPips'];
 let propsCache = null;
+// Размеры аккаунтов (лист Props) — база для пересчёта риска $ → %.
+// Не кэшируем: после пройденного челленджа размер меняется строкой в Props.
+let propSizes = {};
 
 async function getProps() {
   if (propsCache) return propsCache;
+  await fetchPropInfo();
+  return propsCache || DEFAULT_PROPS;
+}
+
+async function fetchPropInfo() {
   try {
     const data = await sheetsPost({ action: 'ping' });
     const props = data && data.data && data.data.props;
     if (Array.isArray(props) && props.length > 0) propsCache = props;
+    if (data && data.data && data.data.sizes) propSizes = data.data.sizes;
   } catch (error) {
     console.error('Props fetch error:', error.message);
   }
-  return propsCache || DEFAULT_PROPS;
+  return { props: propsCache || DEFAULT_PROPS, sizes: propSizes };
+}
+
+// 300$ на аккаунте 50 000$ → 0.6 (%). Три знака хватает: 333$/100k = 0.333
+function usdToRiskPct(usd, size) {
+  return Math.round(usd / size * 100 * 1000) / 1000;
 }
 
 function parseNumber(text) {
@@ -108,7 +122,8 @@ async function uploadToGoogleSheets(trade, links) {
       position: trade.position,
       accounts: trade.accounts,
       errors: '',
-      rating: links[0] || '',
+      grade: trade.grade || '',
+      screenshot5m: links[0] || '',
       screenshot1h: links[1] || '',
       screenshot4h: links[2] || '',
       screenshot1d: links[3] || '',
@@ -129,7 +144,7 @@ async function uploadToGoogleSheets(trade, links) {
   }
 }
 
-async function updateTradeResult(trade, result, results) {
+async function updateTradeResult(trade, result, results, errors) {
   try {
     const payload = {
       action: 'updateTrade',
@@ -137,7 +152,8 @@ async function updateTradeResult(trade, result, results) {
       row: trade.row,
       pair: trade.pair,
       result: result,
-      results: results
+      results: results,
+      errors: errors || ''
     };
 
     const data = await sheetsPost(payload);
@@ -220,17 +236,25 @@ function accountsKeyboard(props, selected) {
   return { inline_keyboard: rows };
 }
 
-function riskKeyboard() {
-  return {
-    inline_keyboard: [
-      [
-        { text: '0.25', callback_data: 'prisk_0.25' },
-        { text: '0.5', callback_data: 'prisk_0.5' },
-        { text: '1', callback_data: 'prisk_1' }
-      ],
-      [{ text: 'Своё', callback_data: 'prisk_custom' }]
-    ]
-  };
+const RISK_PRESETS = [0.25, 0.5, 1];
+
+// Кнопки в долларах под размер конкретного аккаунта; в callback — процент,
+// потому что в таблицу идёт именно он. Без размера (нет строки в Props) — в %.
+function riskKeyboard(size) {
+  const presets = RISK_PRESETS.map(pct => ({
+    text: size ? `${Math.round(size * pct / 100)}$ (${pct}%)` : `${pct}%`,
+    callback_data: `prisk_${pct}`
+  }));
+  return { inline_keyboard: [presets, [{ text: 'Своё', callback_data: 'prisk_custom' }]] };
+}
+
+function riskLabel(state, name) {
+  const usd = state.accRiskUsd[name];
+  return usd !== undefined ? `${usd}$ (${state.accRisks[name]}%)` : `${state.accRisks[name]}%`;
+}
+
+function riskSummary(state) {
+  return state.accSelected.map(n => `${n} — ${riskLabel(state, n)}`).join(', ');
 }
 
 async function askRiskForNext(ctx, state) {
@@ -238,21 +262,73 @@ async function askRiskForNext(ctx, state) {
   if (!name) {
     state.step = 'waiting_thoughts';
     userStates.set(ctx.chat.id, state);
-    const summary = state.accSelected.map(n => `${n} — ${state.accRisks[n]}%`).join(', ');
-    await ctx.reply(`Аккаунты: ${summary}\n\nНапиши свои мысли перед входом:`);
+    await ctx.reply(`Аккаунты: ${riskSummary(state)}\n\nНапиши свои мысли перед входом:`);
     return;
   }
 
   state.step = 'waiting_risk';
   userStates.set(ctx.chat.id, state);
-  await ctx.reply(`Риск на ${name} (% от баланса)?`, { reply_markup: riskKeyboard() });
+  const size = (state.sizes || {})[name];
+  const question = size
+    ? `Риск на ${name} — сколько $? (аккаунт ${size.toLocaleString('ru-RU')}$)`
+    : `Риск на ${name} (% от размера аккаунта)? Размер в Props не задан`;
+  await ctx.reply(question, { reply_markup: riskKeyboard(size) });
+}
+
+function gradeKeyboard() {
+  return {
+    inline_keyboard: [[
+      { text: 'A', callback_data: 'grade_A' },
+      { text: 'A (-)', callback_data: 'grade_A (-)' },
+      { text: 'B', callback_data: 'grade_B' },
+      { text: 'C', callback_data: 'grade_C' }
+    ]]
+  };
+}
+
+async function saveNewTrade(ctx, state) {
+  await ctx.reply('⏳ Загружаю в журнал...');
+
+  const sheetData = {
+    day: new Date().toLocaleDateString('ru-RU', { weekday: 'long', timeZone: 'Europe/Minsk' }),
+    session: state.session,
+    pair: state.asset,
+    thoughts: state.thoughts,
+    position: state.position,
+    grade: state.grade,
+    accounts: state.accSelected.map(name => ({ name: name, risk: state.accRisks[name] }))
+  };
+
+  const result = await uploadToGoogleSheets(sheetData, state.links);
+
+  if (!result) {
+    state.step = 'waiting_grade';
+    userStates.set(ctx.chat.id, state);
+    await ctx.reply('❌ Не записалось в таблицу. Нажми оценку ещё раз.', { reply_markup: gradeKeyboard() });
+    return;
+  }
+
+  userStates.set(ctx.chat.id, { step: 'idle' });
+  await ctx.reply(
+    `✅ ${state.asset} ${state.position} · оценка ${state.grade} · ${riskSummary(state)}\n\n` +
+    'Записал.\n<b>Ты дал цену слова, у тебя есть 5 минут…</b>\n\n/closetrade для закрытия',
+    { parse_mode: 'HTML' }
+  );
 }
 
 async function askUsdForNext(ctx, state) {
   const prop = state.closeQueue[state.closeIdx];
 
   if (!prop) {
-    await finishClose(ctx, state);
+    if ((state.closeResults || []).length === 0) {
+      await finishClose(ctx, state);
+      return;
+    }
+    state.step = 'closing_errors';
+    userStates.set(ctx.chat.id, state);
+    await ctx.reply('Ошибки после сделки/выводы:', {
+      reply_markup: { inline_keyboard: [[{ text: 'Пропустить', callback_data: 'errors_skip' }]] }
+    });
     return;
   }
 
@@ -279,7 +355,7 @@ async function finishClose(ctx, state) {
 
   await ctx.reply('⏳ Записываю...');
 
-  const data = await updateTradeResult(trade, state.closeResult, results);
+  const data = await updateTradeResult(trade, state.closeResult, results, state.closeErrors);
 
   if (!data) {
     await ctx.reply('❌ Ошибка при обновлении таблицы. Попробуй /closetrade ещё раз.');
@@ -295,6 +371,7 @@ async function finishClose(ctx, state) {
     .map(p => p.name);
 
   let text = `✅ ${trade.pair} закрыт:\n` + lines.join('\n');
+  if (state.closeErrors) text += `\n\n📝 ${state.closeErrors}`;
   if (skipped.length > 0) text += `\n\n⏳ Ещё открыто: ${skipped.join(', ')} — закроешь через /closetrade`;
 
   await ctx.reply(text);
@@ -428,7 +505,7 @@ bot.on('text', async (ctx) => {
     const links = text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+/g) || [];
 
     // Шаги, на которых бот ждёт именно текст — там ссылка означает не новую сделку
-    const awaitingText = ['waiting_thoughts', 'waiting_risk_custom', 'closing_result', 'closing_usd']
+    const awaitingText = ['waiting_thoughts', 'waiting_risk_custom', 'closing_result', 'closing_usd', 'closing_errors']
       .includes(state.step);
 
     if (links.length > 0 && !awaitingText) {
@@ -451,37 +528,37 @@ bot.on('text', async (ctx) => {
     }
 
     if (state.step === 'waiting_risk_custom') {
-      const risk = parseNumber(text);
-      if (risk === null || risk <= 0 || risk > 10) {
-        await ctx.reply('Не понял риск. Введи число в процентах, например 0.5 или 1');
-        return;
+      const name = state.accSelected[state.riskIdx];
+      const size = (state.sizes || {})[name];
+      const value = parseNumber(text);
+
+      if (size) {
+        // ввод в долларах, в таблицу — % от размера аккаунта
+        if (value === null || value <= 0 || value > size * 0.1) {
+          await ctx.reply(`Не понял сумму. Введи риск в долларах, например 300 (не больше ${Math.round(size * 0.1)}$ — это 10% аккаунта)`);
+          return;
+        }
+        state.accRiskUsd[name] = value;
+        state.accRisks[name] = usdToRiskPct(value, size);
+      } else {
+        if (value === null || value <= 0 || value > 10) {
+          await ctx.reply('Не понял риск. Введи число в процентах, например 0.5 или 1');
+          return;
+        }
+        state.accRisks[name] = value;
       }
-      state.accRisks[state.accSelected[state.riskIdx]] = risk;
       state.riskIdx++;
       await askRiskForNext(ctx, state);
 
     } else if (state.step === 'waiting_thoughts') {
       state.thoughts = text;
-      await ctx.reply('⏳ Загружаю в журнал...');
+      state.step = 'waiting_grade';
+      userStates.set(chatId, state);
+      await ctx.reply('Оцени позицию:', { reply_markup: gradeKeyboard() });
 
-      const sheetData = {
-        day: new Date().toLocaleDateString('ru-RU', { weekday: 'long', timeZone: 'Europe/Minsk' }),
-        session: state.session,
-        pair: state.asset,
-        thoughts: state.thoughts,
-        position: state.position,
-        accounts: state.accSelected.map(name => ({ name: name, risk: state.accRisks[name] }))
-      };
-
-      const result = await uploadToGoogleSheets(sheetData, state.links);
-
-      if (result) {
-        const accs = state.accSelected.map(n => `${n} ${state.accRisks[n]}%`).join(', ');
-        await ctx.reply(`✅ Сделка открыта и записана в журнал!\n${state.asset} ${state.position} · ${accs}\n\nДля новой отправь ссылки или /closetrade для закрытия`);
-        userStates.set(chatId, { step: 'idle' });
-      } else {
-        await ctx.reply('❌ Не записалось в таблицу. Попробуй ещё раз.');
-      }
+    } else if (state.step === 'closing_errors') {
+      state.closeErrors = text.trim();
+      await finishClose(ctx, state);
 
     } else if (state.step === 'closing_result') {
       state.closeResult = text;
@@ -500,7 +577,7 @@ bot.on('text', async (ctx) => {
       state.closeIdx++;
       await askUsdForNext(ctx, state);
 
-    } else if (['waiting_asset', 'waiting_session', 'waiting_position', 'waiting_accounts', 'waiting_risk', 'closing_select_trade'].includes(state.step)) {
+    } else if (['waiting_asset', 'waiting_session', 'waiting_position', 'waiting_accounts', 'waiting_risk', 'waiting_grade', 'closing_select_trade'].includes(state.step)) {
       await ctx.reply('Нажми кнопку выше 👆 или /reset чтобы начать заново.');
 
     } else {
@@ -552,9 +629,12 @@ bot.on('callback_query', async (ctx) => {
     } else if (data.startsWith('pos_')) {
       state.position = data.replace('pos_', '');
       state.step = 'waiting_accounts';
-      state.props = await getProps();
+      const info = await fetchPropInfo();
+      state.props = info.props;
+      state.sizes = info.sizes;
       state.accSelected = [];
       state.accRisks = {};
+      state.accRiskUsd = {};
       userStates.set(chatId, state);
 
       await ctx.reply('На каких аккаунтах вошёл? (можно несколько)', {
@@ -594,15 +674,38 @@ bot.on('callback_query', async (ctx) => {
         return;
       }
       const value = data.replace('prisk_', '');
+      const name = state.accSelected[state.riskIdx];
+      const size = (state.sizes || {})[name];
       if (value === 'custom') {
         state.step = 'waiting_risk_custom';
         userStates.set(chatId, state);
-        await ctx.reply(`Введи риск на ${state.accSelected[state.riskIdx]} в %:`);
+        await ctx.reply(size ? `Введи риск на ${name} в долларах:` : `Введи риск на ${name} в %:`);
       } else {
-        state.accRisks[state.accSelected[state.riskIdx]] = parseFloat(value);
+        const pct = parseFloat(value);
+        state.accRisks[name] = pct;
+        if (size) state.accRiskUsd[name] = Math.round(size * pct / 100);
         state.riskIdx++;
         await askRiskForNext(ctx, state);
       }
+
+    } else if (data.startsWith('grade_')) {
+      if (state.step !== 'waiting_grade') {
+        await ctx.answerCbQuery('Этот шаг уже пройден');
+        return;
+      }
+      state.grade = data.replace('grade_', '');
+      state.step = 'saving';
+      userStates.set(chatId, state);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      await saveNewTrade(ctx, state);
+
+    } else if (data === 'errors_skip') {
+      if (state.step !== 'closing_errors') {
+        await ctx.answerCbQuery('Этот шаг уже пройден');
+        return;
+      }
+      state.closeErrors = '';
+      await finishClose(ctx, state);
 
     } else if (data.startsWith('close_trade_')) {
       const tradeIdx = parseInt(data.split('_')[2], 10);
@@ -662,8 +765,8 @@ app.post('/bot', (req, res) => {
 
 // При require из тестов сервер не поднимаем — только экспортируем функции
 module.exports = {
-  sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
-  parseNumber, fmtMoney, fmtPct, fmtRR, formatStats
+  bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
+  parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct
 };
 
 if (require.main === module) app.listen(PORT, async () => {

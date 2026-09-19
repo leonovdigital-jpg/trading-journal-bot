@@ -14,6 +14,8 @@ var COL_TAKESTOP   = 15;   // O (устаревшее)
 var COL_RISK_OLD   = 16;   // P (устаревшее)
 var COL_RR_OLD     = 17;   // Q (устаревшее)
 var COL_RESULT     = 18;   // R — скрин результата
+var COL_ERRORS     = 7;    // G — ошибки после сделки / выводы
+var COL_GRADE      = 19;   // S — оценка позиции (A / A (-) / B / C)
 var COL_ACCOUNT_OLD = 20;  // T — аккаунт (историческое)
 
 var PROPS_SHEET = 'Props';
@@ -127,9 +129,14 @@ function doPost(e) {
     if (data.action === 'updateTrade')   return remember(cache, cacheKey, updateTradeResult(sheet, data));
     if (data.action === 'setup')         return runSetup(ss, sheet);
     if (data.action === 'dump')          return dumpSheet(sheet, data);
+    if (data.action === 'headers')       { buildHeaders(sheet); return createResponse(true, 'headers rebuilt'); }
     if (data.action === 'ping') {
+      // sizes — размер аккаунта из Props на сейчас: бот пересчитывает риск $ → %
+      var sizes = {};
+      PROPS.forEach(function (name) { sizes[name] = balanceFor(ss, name, new Date()); });
       return createResponse(true, 'pong', {
         props: PROPS,
+        sizes: sizes,
         timezone: ss.getSpreadsheetTimeZone(),
         locale: ss.getSpreadsheetLocale(),
         argSep: ARG_SEP,
@@ -576,6 +583,10 @@ function getOpenTrades(sheet) {
 function addNewTrade(sheet, data) {
   var now = new Date();
 
+  // старый бот присылал скрин 1-5m в поле rating; новый — screenshot5m, а grade = оценка
+  var shot5m = data.screenshot5m || (/^https?:/.test(String(data.rating || '')) ? data.rating : '');
+  var grade = /^https?:/.test(String(data.rating || '')) ? '' : (data.grade || data.rating || '');
+
   var row = [
     now,
     data.day || '',
@@ -584,7 +595,7 @@ function addNewTrade(sheet, data) {
     data.thoughts || '',
     data.position || '',
     data.errors || '',
-    data.rating || '',
+    shot5m,
     data.screenshot1h || '',
     data.screenshot4h || '',
     data.screenshot1d || '',
@@ -597,6 +608,7 @@ function addNewTrade(sheet, data) {
   var lastRow = sheet.getLastRow();
 
   sheet.getRange(lastRow, 1).setValue(now).setNumberFormat('dd.MM.yyyy, HH:mm:ss');
+  if (grade) sheet.getRange(lastRow, COL_GRADE).setValue(grade);
 
   var accounts = data.accounts || [];
 
@@ -649,6 +661,12 @@ function updateTradeResult(sheet, data) {
 
   if (!isEmpty(data.result)) {
     sheet.getRange(row, COL_RESULT).setValue(data.result);
+  }
+
+  // выводы по сделке: при закрытии по частям дописываем, а не затираем
+  if (!isEmpty(data.errors)) {
+    var prevErrors = values[rowIndex][COL_ERRORS - 1];
+    sheet.getRange(row, COL_ERRORS).setValue(isEmpty(prevErrors) ? data.errors : prevErrors + ' | ' + data.errors);
   }
 
   var results = data.results || [];
@@ -853,6 +871,7 @@ function buildHeaders(sheet) {
   sheet.getRange(1, COL_RISK_OLD).setValue('Risk (ист.)');
   sheet.getRange(1, COL_RR_OLD).setValue('RR (ист.)');
   sheet.getRange(1, COL_RESULT).setValue('Скрин результата');
+  sheet.getRange(1, COL_GRADE).setValue('Оценка');
   sheet.getRange(1, COL_ACCOUNT_OLD).setValue('Аккаунты');
 
   var colors = ['#1B5E20', '#0D47A1', '#4A148C', '#B71C1C', '#004D40'];
