@@ -769,23 +769,41 @@ module.exports = {
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct
 };
 
+// На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит
+// к нам, а мы к нему — не нужны ни домен, ни сертификат, ни открытые порты.
+// На Render остаётся вебхук. Одновременно включать нельзя: Telegram отдаёт
+// апдейты либо туда, либо сюда, и второй экземпляр будет получать 409.
 if (require.main === module) app.listen(PORT, async () => {
-  const BOT_DOMAIN = process.env.RENDER_EXTERNAL_URL || 'https://trading-journal-bot-18r8.onrender.com';
-  const webhookUrl = `${BOT_DOMAIN}/bot`;
+  const POLLING = process.env.BOT_MODE === 'polling';
 
   try {
     await bot.telegram.deleteWebhook();
     console.log('🗑️ Deleted old webhook');
 
-    await new Promise(r => setTimeout(r, 1000));
+    if (POLLING) {
+      // launch() не резолвится, пока бот жив, — поэтому без await.
+      // Если опрос упал (таймаут сети, 409 от перехваченного вебхука), процесс
+      // обязан умереть: express сам по себе продолжал бы слушать порт, systemd
+      // считал бы сервис живым, а бот молчал бы. Restart=always поднимет заново.
+      bot.launch().catch(err => {
+        console.error('❌ Polling died, exiting for restart:', err.message);
+        process.exit(1);
+      });
+      console.log('🤖 Trade Journal Bot started in polling mode');
+    } else {
+      const BOT_DOMAIN = process.env.RENDER_EXTERNAL_URL || 'https://trading-journal-bot-18r8.onrender.com';
+      const webhookUrl = `${BOT_DOMAIN}/bot`;
 
-    await bot.telegram.setWebhook(webhookUrl);
-    console.log(`🤖 Trade Journal Bot webhook set to ${webhookUrl}`);
+      await new Promise(r => setTimeout(r, 1000));
 
-    const info = await bot.telegram.getWebhookInfo();
-    console.log(`📍 Webhook info:`, JSON.stringify(info, null, 2));
+      await bot.telegram.setWebhook(webhookUrl);
+      console.log(`🤖 Trade Journal Bot webhook set to ${webhookUrl}`);
+
+      const info = await bot.telegram.getWebhookInfo();
+      console.log(`📍 Webhook info:`, JSON.stringify(info, null, 2));
+    }
   } catch (err) {
-    console.error('❌ Webhook error:', err.message);
+    console.error('❌ Start error:', err.message);
   }
 
   try {
