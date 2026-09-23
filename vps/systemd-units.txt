@@ -1,0 +1,100 @@
+### trade-bot.service
+[Unit]
+Description=Trade Journal Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/trade-bot
+Environment=BOT_MODE=polling
+Environment=PORT=3000
+Environment=WORKER_URL=http://127.0.0.1:3100
+ExecStart=/usr/bin/node bot.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+### tv-browser.service
+[Unit]
+Description=Persistent Chromium with TradingView session
+After=xvfb.service fluxbox.service
+Requires=xvfb.service
+
+[Service]
+Environment=DISPLAY=:99
+Environment=HOME=/home/ubuntu
+User=ubuntu
+WorkingDirectory=/home/ubuntu/tv-worker
+ExecStart=/usr/bin/node browser.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+### tv-worker.service
+[Unit]
+Description=TradingView snapshot worker
+After=tv-browser.service
+Requires=tv-browser.service
+
+[Service]
+Environment=WORKER_PORT=3100
+Environment=DXY_SYMBOL=CAPITALCOM:DXY
+User=ubuntu
+WorkingDirectory=/home/ubuntu/tv-worker
+ExecStart=/usr/bin/node worker.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+### xvfb.service
+[Unit]
+Description=Virtual display :99
+[Service]
+ExecStart=/usr/bin/Xvfb :99 -screen 0 3840x2160x24 -ac
+Restart=always
+[Install]
+WantedBy=multi-user.target
+
+### fluxbox.service
+[Unit]
+Description=Window manager on :99
+After=xvfb.service
+Requires=xvfb.service
+[Service]
+Environment=DISPLAY=:99
+User=ubuntu
+ExecStart=/usr/bin/fluxbox
+Restart=always
+[Install]
+WantedBy=multi-user.target
+
+### x11vnc.service
+[Unit]
+Description=VNC for :99 (localhost only)
+After=xvfb.service
+Requires=xvfb.service
+[Service]
+ExecStart=/usr/bin/x11vnc -display :99 -forever -shared -rfbport 5900 -localhost -nopw -quiet
+Restart=always
+[Install]
+WantedBy=multi-user.target
+
+### novnc.service
+[Unit]
+Description=noVNC web access (localhost only)
+After=x11vnc.service
+Requires=x11vnc.service
+[Service]
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900
+Restart=always
+[Install]
+WantedBy=multi-user.target
+

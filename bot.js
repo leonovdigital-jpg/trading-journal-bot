@@ -89,6 +89,44 @@ function usdToRiskPct(usd, size) {
   return Math.round(usd / size * 100 * 1000) / 1000;
 }
 
+// Воркер снапшотов живёт на том же сервере и слушает только localhost.
+// Если переменной нет (запуск не на сервере) — авторежим выключен, бот работает как раньше.
+const WORKER_URL = process.env.WORKER_URL || '';
+
+// Символ берём из самой ссылки: <title> страницы снапшота — «PEPPERSTONE:USDCHF Chart Image by …».
+// Зашивать символ в код нельзя: разметка привязана к брокеру, а брокера пользователь меняет.
+async function symbolFromLink(link) {
+  try {
+    const r = await axios.get(link, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const m = String(r.data).match(/<title>([A-Z0-9_]+:[A-Z0-9_.]+) Chart Image/i);
+    return m ? m[1] : null;
+  } catch (error) {
+    console.error('Symbol fetch error:', error.message);
+    return null;
+  }
+}
+
+// Возвращает промис с шестью ссылками. Запускается сразу, как пришла ссылка, и «доспевает»,
+// пока пользователь отвечает на вопросы, — к моменту записи скрины обычно уже готовы.
+function requestSnapshots(symbol) {
+  return axios.post(`${WORKER_URL}/snapshots`, { symbol }, { timeout: 240000 })
+    .then(r => r.data.links)
+    .catch(err => {
+      const reason = (err.response && err.response.data && err.response.data.error) || err.message;
+      throw new Error(reason);
+    });
+}
+
+async function workerHealth() {
+  if (!WORKER_URL) return null;
+  try {
+    const r = await axios.get(`${WORKER_URL}/health`, { timeout: 8000 });
+    return r.data;
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
 function parseNumber(text) {
   const cleaned = String(text).trim().replace(/\s/g, '').replace(',', '.').replace(/^\+/, '');
   if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
@@ -287,6 +325,23 @@ function gradeKeyboard() {
 }
 
 async function saveNewTrade(ctx, state) {
+  let links = state.links;
+  let snapshotError = null;
+
+  // Скрины снимаются параллельно опросу; здесь просто забираем результат.
+  // Журнал не должен зависеть от воркера: если он не справился — пишем сделку
+  // с одним скрином и говорим об этом прямо.
+  if (state.snapshots) {
+    await ctx.reply('⏳ Забираю остальные таймфреймы...');
+    try {
+      const s = await state.snapshots;
+      links = [state.links[0], s['1h'], s['4h'], s['1d'], s.dxy1h, s.dxy4h, s.dxy1d];
+    } catch (error) {
+      snapshotError = error.message;
+      console.error('Snapshots failed:', snapshotError);
+    }
+  }
+
   await ctx.reply('⏳ Загружаю в журнал...');
 
   const sheetData = {
@@ -299,7 +354,7 @@ async function saveNewTrade(ctx, state) {
     accounts: state.accSelected.map(name => ({ name: name, risk: state.accRisks[name] }))
   };
 
-  const result = await uploadToGoogleSheets(sheetData, state.links);
+  const result = await uploadToGoogleSheets(sheetData, links);
 
   if (!result) {
     state.step = 'waiting_grade';
@@ -309,8 +364,13 @@ async function saveNewTrade(ctx, state) {
   }
 
   userStates.set(ctx.chat.id, { step: 'idle' });
+
+  const shots = snapshotError
+    ? `\n\n⚠️ Скрины таймфреймов не снялись: ${snapshotError}\nВ таблице только 1-5m — остальные добавь вручную.`
+    : (state.snapshots ? `\n📸 Скрины: 1h, 4h, 1d + DXY — записаны` : '');
+
   await ctx.reply(
-    `✅ ${state.asset} ${state.position} · оценка ${state.grade} · ${riskSummary(state)}\n\n` +
+    `✅ ${state.asset} ${state.position} · оценка ${state.grade} · ${riskSummary(state)}${shots}\n\n` +
     'Записал.\n<b>Ты дал цену слова, у тебя есть 5 минут…</b>\n\n/closetrade для закрытия',
     { parse_mode: 'HTML' }
   );
@@ -381,12 +441,33 @@ async function finishClose(ctx, state) {
 
 bot.start((ctx) => {
   userStates.delete(ctx.chat.id);
-  ctx.reply('👋 Привет! Начинай отправлять Share ссылки с TradingView:\n\n1️⃣ 1-5m\n2️⃣ 1h\n3️⃣ 4h\n4️⃣ 1d\n5️⃣ DXY 1h (опционально)\n6️⃣ DXY 4h (опционально)\n7️⃣ DXY 1d (опционально)\n\n/closetrade — закрыть сделку\n/stats — балансы и текущий месяц по пропам\n/balance — поправить баланс пропа\n/reset — сбросить диалог');
+  ctx.reply('👋 Привет! Кинь одну Share-ссылку с TradingView — снимок входа 1-5m.\n' +
+    '1h, 4h, 1d и DXY сниму сам с твоего графика.\n\n' +
+    'Если пришлёшь несколько ссылок сразу — возьму их как есть, в порядке:\n' +
+    '1-5m, 1h, 4h, 1d, DXY 1h, DXY 4h, DXY 1d\n\n' +
+    '/closetrade — закрыть сделку\n/stats — балансы и текущий месяц по пропам\n' +
+    '/balance — поправить баланс пропа\n/tv — проверить съёмщик скринов\n/reset — сбросить диалог');
 });
 
 bot.command('reset', async (ctx) => {
   userStates.delete(ctx.chat.id);
   await ctx.reply('🔄 Сброшено. Отправляй ссылки с TradingView.');
+});
+
+// Проверка съёмщика скринов: жив ли, не слетела ли сессия TradingView
+bot.command('tv', async (ctx) => {
+  if (!WORKER_URL) {
+    await ctx.reply('Автосъёмка скринов выключена: бот запущен не на сервере с воркером.');
+    return;
+  }
+  const h = await workerHealth();
+  if (!h || !h.ok) {
+    await ctx.reply(`❌ Воркер не отвечает: ${(h && h.error) || 'нет связи'}\nСкрины придётся присылать вручную.`);
+  } else if (!h.loggedIn) {
+    await ctx.reply('⚠️ Воркер жив, но сессия TradingView слетела — нужен повторный вход на сервере.');
+  } else {
+    await ctx.reply(`✅ Воркер готов${h.busy ? ', сейчас занят съёмкой' : ''}. Кидай одну ссылку 1-5m — остальное сниму сам.`);
+  }
 });
 
 bot.command('stats', async (ctx) => {
@@ -509,6 +590,32 @@ bot.on('text', async (ctx) => {
       .includes(state.step);
 
     if (links.length > 0 && !awaitingText) {
+      // Одна ссылка + доступный воркер = авторежим: остальные шесть таймфреймов
+      // бот снимет сам с графика пользователя. Несколько ссылок — как раньше, вручную.
+      if (links.length === 1 && WORKER_URL) {
+        const symbol = await symbolFromLink(links[0]);
+        if (symbol) {
+          const asset = symbol.split(':').pop();
+          const snapshots = requestSnapshots(symbol);
+          snapshots.catch(() => {});   // ошибку разберём при записи, здесь только чтобы не падать
+
+          userStates.set(chatId, { links: [links[0]], asset, symbol, snapshots, step: 'waiting_session' });
+
+          await ctx.reply(`✅ ${asset} · снимок 1-5m принят\n\n⏳ 1h, 4h, 1d и DXY снимаю сам — будут готовы к концу опроса.`);
+          await ctx.reply('Какая сессия?', {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: 'LO', callback_data: 'session_LO' }],
+                [{ text: 'NY', callback_data: 'session_NY' }],
+                [{ text: 'NYSE', callback_data: 'session_NYSE' }]
+              ]
+            }
+          });
+          return;
+        }
+        await ctx.reply('Не понял символ из ссылки — дальше вручную.');
+      }
+
       const tfNames = ['1-5m', '1h', '4h', '1d', 'DXY 1h', 'DXY 4h', 'DXY 1d'];
       const display = links.map((_, i) => `${i + 1}. ${tfNames[i] || `Link ${i + 1}`}`).join('\n');
 
