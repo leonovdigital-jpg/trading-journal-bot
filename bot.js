@@ -122,6 +122,33 @@ function requestSnapshots(symbol) {
     });
 }
 
+// Если в момент записи скрины не снялись — бот не просит пользователя ничего делать,
+// а пробует сам: две попытки с паузой, и допишет их в ту же строку, когда получится.
+// Строку знаем точно (её вернул Apps Script), поэтому промахнуться мимо сделки нельзя.
+async function backfillScreenshots(ctx, row, symbol, firstError) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await sleep(attempt === 1 ? 20000 : 90000);
+    try {
+      const s = await requestSnapshots(symbol);
+      const reply = await sheetsPost({
+        action: 'setScreenshots',
+        requestId: newRequestId(),
+        row: row,
+        links: { h1: s['1h'], h4: s['4h'], d1: s['1d'], dxy1h: s.dxy1h, dxy4h: s.dxy4h, dxy1d: s.dxy1d }
+      });
+      if (reply && reply.success === true) {
+        await ctx.reply(`📸 Скрины досняты и записаны (строка ${reply.data.row}).`).catch(() => {});
+        return;
+      }
+      console.error('Backfill write failed:', JSON.stringify(reply).slice(0, 200));
+    } catch (error) {
+      console.error(`Backfill attempt ${attempt} failed:`, error.message);
+      firstError = error.message;
+    }
+  }
+  await ctx.reply(`❌ Скрины так и не снялись: ${firstError}\nПроверь съёмщика: /tv\nКогда починится — /shots <ссылка на вход>`).catch(() => {});
+}
+
 async function workerHealth() {
   if (!WORKER_URL) return null;
   try {
@@ -370,8 +397,12 @@ async function saveNewTrade(ctx, state) {
 
   userStates.set(ctx.chat.id, { step: 'idle' });
 
+  if (snapshotError && state.symbol && result.row) {
+    backfillScreenshots(ctx, result.row, state.symbol, snapshotError);
+  }
+
   const shots = snapshotError
-    ? `\n\n⚠️ Скрины таймфреймов не снялись: ${snapshotError}\nВ таблице только 1-5m — остальные добавь вручную.`
+    ? `\n\n⚠️ Скрины таймфреймов не снялись: ${snapshotError}\nПробую ещё раз сам — напишу, когда добавлю.`
     : (state.snapshots ? `\n📸 Скрины: 1h, 4h, 1d + DXY — записаны` : '');
 
   await ctx.reply(
