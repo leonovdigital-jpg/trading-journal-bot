@@ -93,12 +93,17 @@ function usdToRiskPct(usd, size) {
 // Если переменной нет (запуск не на сервере) — авторежим выключен, бот работает как раньше.
 const WORKER_URL = process.env.WORKER_URL || '';
 
-// Символ берём из самой ссылки: <title> страницы снапшота — «PEPPERSTONE:USDCHF Chart Image by …».
+// Символ берём из самой ссылки: в <title> страницы снапшота он есть всегда.
 // Зашивать символ в код нельзя: разметка привязана к брокеру, а брокера пользователь меняет.
+// Язык страницы значения не имеет: с телефона ссылка приходит с домена ru. и заголовок
+// выглядит как «Снимок графика «PEPPERSTONE:USDCHF» от leonovdigital», а с компьютера —
+// «PEPPERSTONE:USDCHF Chart Image by leonovdigital». Ищем сам шаблон БИРЖА:СИМВОЛ.
 async function symbolFromLink(link) {
   try {
     const r = await axios.get(link, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const m = String(r.data).match(/<title>([A-Z0-9_]+:[A-Z0-9_.]+) Chart Image/i);
+    const title = String(r.data).match(/<title>([\s\S]*?)<\/title>/i);
+    if (!title) return null;
+    const m = title[1].match(/([A-Z][A-Z0-9_]*:[A-Z0-9_.]+)/);
     return m ? m[1] : null;
   } catch (error) {
     console.error('Symbol fetch error:', error.message);
@@ -446,12 +451,57 @@ bot.start((ctx) => {
     'Если пришлёшь несколько ссылок сразу — возьму их как есть, в порядке:\n' +
     '1-5m, 1h, 4h, 1d, DXY 1h, DXY 4h, DXY 1d\n\n' +
     '/closetrade — закрыть сделку\n/stats — балансы и текущий месяц по пропам\n' +
-    '/balance — поправить баланс пропа\n/tv — проверить съёмщик скринов\n/reset — сбросить диалог');
+    '/balance — поправить баланс пропа\n/shots — дослать скрины в последнюю сделку\n' +
+    '/tv — проверить съёмщик скринов\n/reset — сбросить диалог');
 });
 
 bot.command('reset', async (ctx) => {
   userStates.delete(ctx.chat.id);
   await ctx.reply('🔄 Сброшено. Отправляй ссылки с TradingView.');
+});
+
+// Дослать скрины в уже записанную сделку: /shots <ссылка на снимок входа>.
+// Нужно, когда съёмщик не справился в момент записи, — чтобы не вбивать шесть ссылок руками.
+bot.command('shots', async (ctx) => {
+  if (!WORKER_URL) {
+    await ctx.reply('Автосъёмка выключена: бот запущен не на сервере с воркером.');
+    return;
+  }
+
+  const link = (ctx.message.text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+/) || [])[0];
+  if (!link) {
+    await ctx.reply('Пришли так: /shots <ссылка на твой снимок входа>\nСкрины добавлю в последнюю записанную сделку.');
+    return;
+  }
+
+  const symbol = await symbolFromLink(link);
+  if (!symbol) {
+    await ctx.reply('Не понял символ из ссылки.');
+    return;
+  }
+
+  await ctx.reply(`⏳ ${symbol}: снимаю 1h, 4h, 1d и DXY — около полутора минут.`);
+
+  try {
+    const s = await requestSnapshots(symbol);
+    const reply = await sheetsPost({
+      action: 'setScreenshots',
+      requestId: newRequestId(),
+      row: 'last',
+      links: { h1: s['1h'], h4: s['4h'], d1: s['1d'], dxy1h: s.dxy1h, dxy4h: s.dxy4h, dxy1d: s.dxy1d }
+    });
+
+    if (!reply || reply.success !== true) {
+      await ctx.reply('❌ Не записалось в таблицу: ' + (reply && reply.message));
+      return;
+    }
+
+    const d = reply.data;
+    await ctx.reply(`✅ ${d.pair} (строка ${d.row}): добавлено ${d.written.length} скринов` +
+      (d.skipped.length ? `\nБыли заняты и не тронуты: ${d.skipped.join(', ')}` : ''));
+  } catch (error) {
+    await ctx.reply('❌ Скрины не снялись: ' + error.message);
+  }
 });
 
 // Проверка съёмщика скринов: жив ли, не слетела ли сессия TradingView

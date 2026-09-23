@@ -145,6 +145,7 @@ function doPost(e) {
     }
     if (data.action === 'fixDatesOnce')  return fixDatesOnce(ss, sheet);
     if (data.action === 'deleteTestRow') return deleteTestRow(sheet, data);
+    if (data.action === 'setScreenshots') return remember(cache, cacheKey, setScreenshots(sheet, data));
     if (data.action === 'setTimezone') {
       ss.setSpreadsheetTimeZone(data.timezone);
       return createResponse(true, 'timezone set', { timezone: ss.getSpreadsheetTimeZone() });
@@ -194,6 +195,37 @@ function deleteTestRow(sheet, data) {
 
   sheet.deleteRow(row);
   return createResponse(true, 'deleted', { row: row, pair: pair });
+}
+
+// Дозаполняет скрины таймфреймов (I–N) в уже записанной строке. Нужно, когда съёмщик
+// не справился в момент записи и скрины добираются потом командой /shots.
+// row: номер строки или 'last'. Занятые ячейки не трогаем, пока не передан overwrite.
+function setScreenshots(sheet, data) {
+  var row = String(data.row) === 'last' ? sheet.getLastRow() : Number(data.row);
+  if (!row || row < 2 || row > sheet.getLastRow()) return createResponse(false, 'bad row');
+
+  var links = data.links || {};
+  var cells = [[9, links.h1], [10, links.h4], [11, links.d1],
+               [12, links.dxy1h], [13, links.dxy4h], [14, links.dxy1d]];
+  var written = [];
+  var skipped = [];
+
+  cells.forEach(function (cell) {
+    if (isEmpty(cell[1])) return;
+    if (!data.overwrite && !isEmpty(sheet.getRange(row, cell[0]).getValue())) {
+      skipped.push(a1col(cell[0]));
+      return;
+    }
+    sheet.getRange(row, cell[0]).setValue(cell[1]);
+    written.push(a1col(cell[0]));
+  });
+
+  return createResponse(true, 'screenshots set', {
+    row: row,
+    pair: String(sheet.getRange(row, 4).getValue()),
+    written: written,
+    skipped: skipped
+  });
 }
 
 function dumpSheet(sheet, data) {
