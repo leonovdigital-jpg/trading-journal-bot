@@ -3,10 +3,68 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const express = require('express');
 
-const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
+// handlerTimeout по умолчанию 90 секунд — меньше, чем съёмка шести таймфреймов (85–100 с).
+// По истечении Telegraf роняет обработчик ошибкой «Promise timed out», а в режиме опроса
+// это валит и сам опрос. Даём десять минут: все долгие шаги укладываются с запасом.
+const bot = new Telegraf(process.env.TELEGRAM_TOKEN, { handlerTimeout: 600000 });
 const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbyrKuqc4_RwXsu2y_kCZVLbD6BUFMnqyzuokQun-4J13aWQlc96pgME2Ai3vef_oYVhQw/exec';
 
-const userStates = new Map();
+// Состояние диалога переживает перезапуск бота: иначе выкатка новой версии или
+// падение посреди закрытия сделки стирают всё, и пользователь начинает заново
+// (так и случилось 23.09 — перезапуск пришёлся ровно на ввод суммы).
+// Промисы съёмки не сериализуются: вместо них пишем флаг и после старта запускаем заново.
+const STATE_FILE = process.env.STATE_FILE || `${__dirname}/state.json`;
+const rawStates = new Map();
+
+function saveStates() {
+  try {
+    const out = {};
+    for (const [chatId, st] of rawStates) {
+      const copy = Object.assign({}, st);
+      copy.pendingShots = !!copy.snapshots;
+      copy.pendingCloseShots = !!copy.closeShots;
+      delete copy.snapshots;
+      delete copy.closeShots;
+      out[chatId] = copy;
+    }
+    require('fs').writeFileSync(STATE_FILE, JSON.stringify(out));
+  } catch (error) {
+    console.error('State save error:', error.message);
+  }
+}
+
+const userStates = {
+  get: key => rawStates.get(key),
+  set: (key, value) => { rawStates.set(key, value); saveStates(); return userStates; },
+  delete: key => { const had = rawStates.delete(key); saveStates(); return had; },
+  get size() { return rawStates.size; }
+};
+
+function restoreStates() {
+  let saved;
+  try {
+    saved = JSON.parse(require('fs').readFileSync(STATE_FILE, 'utf8'));
+  } catch (error) {
+    return;
+  }
+
+  for (const [chatId, st] of Object.entries(saved)) {
+    if (st.pendingShots && st.symbol && WORKER_URL) {
+      st.snapshots = requestSnapshots(st.symbol, dxyOpts(st.symbol));
+      st.snapshots.catch(() => {});
+    }
+    if (st.pendingCloseShots && st.closingTrade && WORKER_URL) {
+      const symbol = symbolForPair(st.closingTrade.pair);
+      if (symbol) {
+        st.closeShots = requestSnapshots(symbol, { tfs: ['5m', '1h'], dxy: null });
+        st.closeShots.catch(() => {});
+      }
+    }
+    rawStates.set(Number(chatId), st);
+  }
+
+  if (rawStates.size) console.log(`♻️ Восстановлено диалогов: ${rawStates.size}`);
+}
 
 // Apps Script отвечает на POST редиректом на script.googleusercontent.com/…/echo,
 // а содержимое по этому адресу реплицируется с задержкой: первый GET нередко
@@ -89,6 +147,15 @@ function usdToRiskPct(usd, size) {
   return Math.round(usd / size * 100 * 1000) / 1000;
 }
 
+// DXY прикладываем только к доллару: для UK100 и прочих индексов он не нужен,
+// а лишние три снимка — это лишняя минута ожидания и пустой мусор в колонках L–N.
+const DXY_FOR = (process.env.DXY_FOR || 'USDCHF').split(',').map(x => x.trim());
+
+function dxyOpts(symbolOrAsset) {
+  const asset = String(symbolOrAsset).split(':').pop();
+  return DXY_FOR.includes(asset) ? {} : { dxy: null };
+}
+
 // Воркер снапшотов живёт на том же сервере и слушает только localhost.
 // Если переменной нет (запуск не на сервере) — авторежим выключен, бот работает как раньше.
 const WORKER_URL = process.env.WORKER_URL || '';
@@ -129,7 +196,7 @@ async function backfillScreenshots(ctx, row, symbol, firstError) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     await sleep(attempt === 1 ? 20000 : 90000);
     try {
-      const s = await requestSnapshots(symbol);
+      const s = await requestSnapshots(symbol, dxyOpts(symbol));
       const reply = await sheetsPost({
         action: 'setScreenshots',
         requestId: newRequestId(),
@@ -507,7 +574,7 @@ async function saveNewTrade(ctx, state) {
 
   const shots = snapshotError
     ? `\n\n⚠️ Скрины таймфреймов не снялись: ${snapshotError}\nПробую ещё раз сам — напишу, когда добавлю.`
-    : (state.snapshots ? `\n📸 Скрины: 1h, 4h, 1d + DXY — записаны` : '');
+    : (state.snapshots ? `\n📸 Скрины: 1h, 4h, 1d${DXY_FOR.includes(state.asset) ? ' + DXY' : ''} — записаны` : '');
 
   await ctx.reply(
     `✅ ${state.asset} ${state.position} · оценка ${state.grade} · ${riskSummary(state)}${shots}\n\n` +
@@ -636,7 +703,7 @@ bot.command('shots', async (ctx) => {
   await ctx.reply(`⏳ ${symbol}: снимаю 1h, 4h, 1d и DXY — около полутора минут.`);
 
   try {
-    const s = await requestSnapshots(symbol);
+    const s = await requestSnapshots(symbol, dxyOpts(symbol));
     const reply = await sheetsPost({
       action: 'setScreenshots',
       requestId: newRequestId(),
@@ -799,12 +866,13 @@ bot.on('text', async (ctx) => {
         const symbol = await symbolFromLink(links[0]);
         if (symbol) {
           const asset = symbol.split(':').pop();
-          const snapshots = requestSnapshots(symbol);
+          const withDxy = DXY_FOR.includes(asset);
+          const snapshots = requestSnapshots(symbol, dxyOpts(symbol));
           snapshots.catch(() => {});   // ошибку разберём при записи, здесь только чтобы не падать
 
           rememberSymbol(asset, symbol);
           const state = { links: [links[0]], asset, symbol, snapshots };
-          await ctx.reply(`✅ ${asset} · снимок 1-5m принят\n\n⏳ 1h, 4h, 1d и DXY снимаю сам — будут готовы к концу опроса.`);
+          await ctx.reply(`✅ ${asset} · снимок 1-5m принят\n\n⏳ 1h, 4h, 1d${withDxy ? ' и DXY' : ''} снимаю сам — будут готовы к концу опроса.`);
           await afterAsset(ctx, state);
           return;
         }
@@ -1081,7 +1149,7 @@ app.post('/bot', (req, res) => {
 // При require из тестов сервер не поднимаем — только экспортируем функции
 module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
-  parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession
+  parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates
 };
 
 // На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит
@@ -1090,6 +1158,8 @@ module.exports = {
 // апдейты либо туда, либо сюда, и второй экземпляр будет получать 409.
 if (require.main === module) app.listen(PORT, async () => {
   const POLLING = process.env.BOT_MODE === 'polling';
+
+  restoreStates();
 
   try {
     await bot.telegram.deleteWebhook();

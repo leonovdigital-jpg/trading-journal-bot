@@ -49,7 +49,20 @@ app.post("/snapshots", async (req, res) => {
     busy = true;
     try {
       const symbols = dxy ? [symbol, dxy] : [symbol];
-      const raw = await takeSnapshots(symbols, { tfs: tfs, restoreSymbol: symbol });
+
+      // Браузер могут перезапустить посреди съёмки — например, при обновлении системы.
+      // Сервис поднимется сам за несколько секунд, поэтому один раз ждём и повторяем,
+      // чтобы бот вообще не узнал о заминке.
+      let raw;
+      try {
+        raw = await takeSnapshots(symbols, { tfs: tfs, restoreSymbol: symbol });
+      } catch (err) {
+        const lost = /Target closed|browser has been closed|Target page, context or browser|websocket|ECONNREFUSED|без контекста|нет вкладки/i.test(err.message);
+        if (!lost) throw err;
+        console.log("браузер пропал посреди съёмки, жду его и повторяю:", err.message.split("\n")[0]);
+        await new Promise(r => setTimeout(r, 15000));
+        raw = await takeSnapshots(symbols, { tfs: tfs, restoreSymbol: symbol });
+      }
 
       const links = {};
       tfs.forEach(function (tf) {
