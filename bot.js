@@ -403,7 +403,15 @@ async function afterAsset(ctx, state) {
     state.session = session;
     state.step = 'waiting_position';
     userStates.set(ctx.chat.id, state);
-    await ctx.reply(`Сессия: ${session}\n\nLong или Short?`, { reply_markup: positionKeyboard() });
+    // Определённую сессию всегда показываем и даём переопределить: бот считает по часам,
+    // а пользователь мог войти раньше, чем прислал ссылку.
+    await ctx.reply(`Сессия: ${session}\n\nLong или Short?`, {
+      reply_markup: {
+        inline_keyboard: positionKeyboard().inline_keyboard.concat([
+          [{ text: `🔁 Сессия ${session} — поменять`, callback_data: 'session_change' }]
+        ])
+      }
+    });
     return;
   }
 
@@ -846,6 +854,11 @@ bot.on('callback_query', async (ctx) => {
     if (data.startsWith('asset_')) {
       state.asset = data.replace('asset_', '');
       await afterAsset(ctx, state);
+
+    } else if (data === 'session_change') {
+      state.step = 'waiting_session';
+      userStates.set(chatId, state);
+      await ctx.reply('Какая сессия?', { reply_markup: sessionKeyboard() });
 
     } else if (data.startsWith('session_')) {
       state.session = data.replace('session_', '');
