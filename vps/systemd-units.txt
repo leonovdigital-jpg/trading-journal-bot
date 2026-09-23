@@ -47,6 +47,12 @@ Environment=DISPLAY=:99
 Environment=HOME=/home/ubuntu
 User=ubuntu
 WorkingDirectory=/home/ubuntu/tv-worker
+# Chromium от snap живёт в пользовательском scope systemd, а не в cgroup сервиса.
+# Если он умер грязно, в профиле остаётся замок, и каждый следующий запуск молча
+# уходит в «Opening in existing browser session» — 23.09 так получился цикл из 96
+# перезапусков и сделка без скринов. Перед стартом подчищаем хвосты.
+ExecStartPre=-/usr/bin/pkill -u ubuntu -f "chromium.*tv-profile"
+ExecStartPre=-/bin/sh -c "rm -f /home/ubuntu/tv-profile/Singleton*"
 ExecStart=/usr/bin/node browser.js
 Restart=always
 RestartSec=10

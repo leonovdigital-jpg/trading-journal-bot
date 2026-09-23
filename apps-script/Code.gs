@@ -228,7 +228,8 @@ function setScreenshots(sheet, data) {
 
   var links = data.links || {};
   var cells = [[9, links.h1], [10, links.h4], [11, links.d1],
-               [12, links.dxy1h], [13, links.dxy4h], [14, links.dxy1d]];
+               [12, links.dxy1h], [13, links.dxy4h], [14, links.dxy1d],
+               [COL_RESULT, links.close5m], [COL_RESULT_1H, links.close1h]];
   var written = [];
   var skipped = [];
 
@@ -253,9 +254,13 @@ function setScreenshots(sheet, data) {
 function dumpSheet(sheet, data) {
   var values = sheet.getDataRange().getValues();
   var rows = Number(data.rows || 3);
+  // from — с какой строки таблицы начать (1-based). По умолчанию с шапки.
+  // from: 'last' отдаёт последние rows строк — так удобно смотреть свежие сделки.
+  var from = String(data.from || '') === 'last' ? Math.max(1, values.length - rows + 1)
+           : Math.max(1, Number(data.from || 1));
   var out = [];
 
-  for (var i = 0; i < Math.min(values.length, rows + 1); i++) {
+  for (var i = from - 1; i < Math.min(values.length, from - 1 + rows + (from === 1 ? 1 : 0)); i++) {
     var row = [];
     for (var j = 0; j < values[i].length; j++) {
       var v = values[i][j];

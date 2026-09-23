@@ -254,6 +254,67 @@ async function workerHealth() {
   }
 }
 
+// Съёмщик живёт своей жизнью: Chromium может упасть, TradingView — разлогинить.
+// Раньше пользователь узнавал об этом только в момент сделки, когда скрины уже
+// не снялись (23.09: браузер лежал 20 минут, и сделка записалась без таймфреймов).
+// Поэтому бот сам опрашивает съёмщика и пишет в чат, когда тот сломался и когда ожил.
+const WATCH_INTERVAL = Number(process.env.WATCH_INTERVAL_MS || 5 * 60 * 1000);
+const WATCH_FAILS_BEFORE_ALERT = 2;   // одиночный промах — обычно штатный перезапуск браузера
+let watchFails = 0;
+let watchAlerted = false;
+let watchTimer = null;
+
+// Кому писать. Бот личный, поэтому если диалог ровно один — берём его чат.
+function adminChatId() {
+  if (process.env.ADMIN_CHAT_ID) return Number(process.env.ADMIN_CHAT_ID);
+  const ids = [...rawStates.keys()];
+  return ids.length === 1 ? ids[0] : null;
+}
+
+async function notifyAdmin(text) {
+  const chatId = adminChatId();
+  if (!chatId) return false;
+  try {
+    await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+    return true;
+  } catch (error) {
+    console.error('Notify failed:', error.message);
+    return false;
+  }
+}
+
+async function checkWorker() {
+  if (!WORKER_URL) return;
+  const health = await workerHealth();
+  const ok = !!(health && health.ok && health.loggedIn);
+
+  if (ok) {
+    if (watchAlerted) await notifyAdmin('✅ Съёмщик графиков снова работает — скрины снимаются как обычно.');
+    watchFails = 0;
+    watchAlerted = false;
+    return;
+  }
+
+  watchFails++;
+  console.error(`Worker health check failed (${watchFails}):`, JSON.stringify(health));
+  if (watchFails < WATCH_FAILS_BEFORE_ALERT || watchAlerted) return;
+
+  watchAlerted = true;
+  const why = health && health.error ? health.error
+            : health && !health.loggedIn ? 'TradingView разлогинил'
+            : 'не отвечает';
+  await notifyAdmin(
+    `⚠️ *Съёмщик графиков лежит:* ${why}\n` +
+    'Сделки записывай как обычно — скрины таймфреймов дошлю, когда починится.'
+  );
+}
+
+function startWatchdog() {
+  if (!WORKER_URL || watchTimer) return;
+  watchTimer = setInterval(() => { checkWorker().catch(() => {}); }, WATCH_INTERVAL);
+  watchTimer.unref();
+}
+
 // Сессию бот определяет сам по времени входа. Границы заданы в МЕСТНОМ времени бирж,
 // а не в минском: Минск часы не переводит, Лондон и Нью-Йорк переводят, поэтому привязка
 // к «10:00 по Минску» ломалась бы дважды в год (и ещё в те недели, когда Европа и США
@@ -612,6 +673,11 @@ async function finishClose(ctx, state) {
   const trade = state.closingTrade;
   const results = state.closeResults || [];
 
+  // Промис съёмки забираем себе и убираем из состояния: иначе saveStates
+  // продолжал бы писать pendingCloseShots, и каждый перезапуск бота заново
+  // снимал бы скрины по уже закрытой сделке.
+  const closeShots = state.closeShots;
+  delete state.closeShots;
   state.step = 'idle';
   userStates.set(ctx.chat.id, state);
 
@@ -624,10 +690,10 @@ async function finishClose(ctx, state) {
   let result1h = '';
   let shotsError = null;
 
-  if (state.closeShots) {
+  if (closeShots) {
     await ctx.reply('⏳ Забираю скрины закрытия...');
     try {
-      const shots = await state.closeShots;
+      const shots = await closeShots;
       result = shots['5m'];
       result1h = shots['1h'];
     } catch (error) {
@@ -655,7 +721,7 @@ async function finishClose(ctx, state) {
 
   let text = `✅ ${trade.pair} закрыт:\n` + lines.join('\n');
   if (shotsError) text += `\n\n⚠️ Скрины закрытия не снялись: ${shotsError}`;
-  else if (state.closeShots) text += `\n📸 Скрины закрытия: 5м и 1ч`;
+  else if (closeShots) text += `\n📸 Скрины закрытия: 5м и 1ч`;
   if (state.closeErrors) text += `\n\n📝 ${state.closeErrors}`;
   if (skipped.length > 0) text += `\n\n⏳ Ещё открыто: ${skipped.join(', ')} — закроешь через /closetrade`;
 
@@ -1149,7 +1215,8 @@ app.post('/bot', (req, res) => {
 // При require из тестов сервер не поднимаем — только экспортируем функции
 module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
-  parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates
+  parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
+  checkWorker, notifyAdmin
 };
 
 // На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит
@@ -1160,6 +1227,7 @@ if (require.main === module) app.listen(PORT, async () => {
   const POLLING = process.env.BOT_MODE === 'polling';
 
   restoreStates();
+  startWatchdog();
 
   try {
     await bot.telegram.deleteWebhook();
