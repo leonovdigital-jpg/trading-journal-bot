@@ -12,7 +12,8 @@ const { chromium } = require("playwright-core");
 
 const CDP = "http://127.0.0.1:9222";
 const OFFSET = 0.15;                                   // сдвиг графика влево: пустое поле справа
-const TFS = [["1h", "60"], ["4h", "240"], ["1d", "1D"]];
+const TF_KEYS = { "5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "1D" };
+const DEFAULT_TFS = ["1h", "4h", "1d"];
 
 async function getPage() {
   const b = await chromium.connectOverCDP(CDP);
@@ -48,6 +49,10 @@ async function isLoggedIn(page) {
 }
 
 async function takeSnapshots(symbols, opts = {}) {
+  const tfs = (opts.tfs && opts.tfs.length ? opts.tfs : DEFAULT_TFS)
+    .filter(t => TF_KEYS[t]);
+  if (!tfs.length) throw new Error("не знаю таких таймфреймов");
+
   const page = await getPage();
 
   await page.getByRole("button", { name: "Don`t need" }).click({ timeout: 2000 }).catch(() => {});
@@ -64,8 +69,8 @@ async function takeSnapshots(symbols, opts = {}) {
   for (const symbol of symbols) {
     await setSymbol(page, symbol);
 
-    for (const [name, key] of TFS) {
-      await setInterval_(page, pane, key);
+    for (const name of tfs) {
+      await setInterval_(page, pane, TF_KEYS[name]);
       await page.keyboard.press("Alt+r");          // вернуть вид к последним барам
       await page.waitForTimeout(2500);             // даём разметке дорисоваться
 

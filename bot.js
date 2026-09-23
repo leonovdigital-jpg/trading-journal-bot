@@ -113,8 +113,8 @@ async function symbolFromLink(link) {
 
 // Возвращает промис с шестью ссылками. Запускается сразу, как пришла ссылка, и «доспевает»,
 // пока пользователь отвечает на вопросы, — к моменту записи скрины обычно уже готовы.
-function requestSnapshots(symbol) {
-  return axios.post(`${WORKER_URL}/snapshots`, { symbol }, { timeout: 240000 })
+function requestSnapshots(symbol, opts = {}) {
+  return axios.post(`${WORKER_URL}/snapshots`, Object.assign({ symbol }, opts), { timeout: 240000 })
     .then(r => r.data.links)
     .catch(err => {
       const reason = (err.response && err.response.data && err.response.data.error) || err.message;
@@ -147,6 +147,34 @@ async function backfillScreenshots(ctx, row, symbol, firstError) {
     }
   }
   await ctx.reply(`❌ Скрины так и не снялись: ${firstError}\nПроверь съёмщика: /tv\nКогда починится — /shots <ссылка на вход>`).catch(() => {});
+}
+
+// В журнале хранится пара без брокера («USDCHF»), а воркеру нужен полный символ
+// («PEPPERSTONE:USDCHF»): разметка привязана к брокеру. Запоминаем соответствие при
+// открытии сделки, чтобы при закрытии — возможно, через сутки и после перезапуска —
+// знать, чей график снимать.
+const SYMBOLS_FILE = process.env.SYMBOLS_FILE || `${__dirname}/symbols.json`;
+
+function loadSymbols() {
+  try {
+    return JSON.parse(require('fs').readFileSync(SYMBOLS_FILE, 'utf8'));
+  } catch (error) {
+    return {};
+  }
+}
+
+function rememberSymbol(pair, symbol) {
+  try {
+    const all = loadSymbols();
+    all[pair] = symbol;
+    require('fs').writeFileSync(SYMBOLS_FILE, JSON.stringify(all, null, 2));
+  } catch (error) {
+    console.error('Symbols save error:', error.message);
+  }
+}
+
+function symbolForPair(pair) {
+  return loadSymbols()[pair] || null;
 }
 
 async function workerHealth() {
@@ -244,7 +272,7 @@ async function uploadToGoogleSheets(trade, links) {
   }
 }
 
-async function updateTradeResult(trade, result, results, errors) {
+async function updateTradeResult(trade, result, results, errors, result1h) {
   try {
     const payload = {
       action: 'updateTrade',
@@ -252,6 +280,7 @@ async function updateTradeResult(trade, result, results, errors) {
       row: trade.row,
       pair: trade.pair,
       result: result,
+      result1h: result1h || '',
       results: results,
       errors: errors || ''
     };
@@ -524,9 +553,25 @@ async function finishClose(ctx, state) {
     return;
   }
 
+  let result = state.closeResult;
+  let result1h = '';
+  let shotsError = null;
+
+  if (state.closeShots) {
+    await ctx.reply('⏳ Забираю скрины закрытия...');
+    try {
+      const shots = await state.closeShots;
+      result = shots['5m'];
+      result1h = shots['1h'];
+    } catch (error) {
+      shotsError = error.message;
+      console.error('Close snapshots failed:', shotsError);
+    }
+  }
+
   await ctx.reply('⏳ Записываю...');
 
-  const data = await updateTradeResult(trade, state.closeResult, results, state.closeErrors);
+  const data = await updateTradeResult(trade, result, results, state.closeErrors, result1h);
 
   if (!data) {
     await ctx.reply('❌ Ошибка при обновлении таблицы. Попробуй /closetrade ещё раз.');
@@ -542,6 +587,8 @@ async function finishClose(ctx, state) {
     .map(p => p.name);
 
   let text = `✅ ${trade.pair} закрыт:\n` + lines.join('\n');
+  if (shotsError) text += `\n\n⚠️ Скрины закрытия не снялись: ${shotsError}`;
+  else if (state.closeShots) text += `\n📸 Скрины закрытия: 5м и 1ч`;
   if (state.closeErrors) text += `\n\n📝 ${state.closeErrors}`;
   if (skipped.length > 0) text += `\n\n⏳ Ещё открыто: ${skipped.join(', ')} — закроешь через /closetrade`;
 
@@ -755,6 +802,7 @@ bot.on('text', async (ctx) => {
           const snapshots = requestSnapshots(symbol);
           snapshots.catch(() => {});   // ошибку разберём при записи, здесь только чтобы не падать
 
+          rememberSymbol(asset, symbol);
           const state = { links: [links[0]], asset, symbol, snapshots };
           await ctx.reply(`✅ ${asset} · снимок 1-5m принят\n\n⏳ 1h, 4h, 1d и DXY снимаю сам — будут готовы к концу опроса.`);
           await afterAsset(ctx, state);
@@ -966,15 +1014,35 @@ bot.on('callback_query', async (ctx) => {
 
       state.closingTrade = trade;
       state.closeQueue = trade.openProps;
-      state.step = 'closing_result';
-      userStates.set(chatId, state);
 
       const open = trade.openProps.map(p => `${p.name} (${p.risk}%)`).join(', ');
       const closed = trade.closedProps.length > 0
         ? `\n✔️ Уже закрыто: ${trade.closedProps.map(p => `${p.name} ${fmtMoney(p.usd)}`).join(', ')}`
         : '';
+      const head = `✅ Закрываем: ${trade.pair} ${trade.position} (${trade.session})\n📍 Открыта: ${trade.date} в ${trade.time}\n💼 Открыто на: ${open}${closed}`;
 
-      await ctx.reply(`✅ Закрываем: ${trade.pair} ${trade.position} (${trade.session})\n📍 Открыта: ${trade.date} в ${trade.time}\n💼 Открыто на: ${open}${closed}\n\nОтправь скрин результата:`);
+      // Скрины закрытия бот снимает сам — 5м и 1ч по тому же брокеру, что и вход.
+      // Символ помним с открытия; если не знаем (сделка из старых или бот не на сервере),
+      // работает прежний путь — просим скрин руками.
+      const closeSymbol = WORKER_URL ? symbolForPair(trade.pair) : null;
+
+      if (closeSymbol) {
+        state.closeShots = requestSnapshots(closeSymbol, { tfs: ['5m', '1h'], dxy: null });
+        state.closeShots.catch(() => {});
+        state.closeResult = '';
+        state.closeIdx = 0;
+        state.closeResults = [];
+        userStates.set(chatId, state);
+
+        await ctx.reply(`${head}\n\n⏳ Скрины закрытия (5м и 1ч) снимаю сам.`);
+        await askUsdForNext(ctx, state);
+        await ctx.answerCbQuery().catch(() => {});
+        return;
+      }
+
+      state.step = 'closing_result';
+      userStates.set(chatId, state);
+      await ctx.reply(`${head}\n\nОтправь скрин результата:`);
 
     } else if (data === 'usd_skip') {
       if (state.step !== 'closing_usd') {

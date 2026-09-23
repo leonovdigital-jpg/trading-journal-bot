@@ -7,16 +7,17 @@ var PROP_DEFAULT_BALANCE = {
   'FundingPips': 100000
 };
 
-var PROP_START_COL = 21;   // U
+var PROP_START_COL = 22;   // V
 var COLS_PER_PROP = 4;     // Risk %, $, %, RR
 
 var COL_TAKESTOP   = 15;   // O (устаревшее)
 var COL_RISK_OLD   = 16;   // P (устаревшее)
 var COL_RR_OLD     = 17;   // Q (устаревшее)
-var COL_RESULT     = 18;   // R — скрин результата
+var COL_RESULT     = 18;   // R — скрин закрытия, 5 минут
+var COL_RESULT_1H  = 19;   // S — скрин закрытия, 1 час
 var COL_ERRORS     = 7;    // G — ошибки после сделки / выводы
-var COL_GRADE      = 19;   // S — оценка позиции (A / A (-) / B / C)
-var COL_ACCOUNT_OLD = 20;  // T — аккаунт (историческое)
+var COL_GRADE      = 20;   // T — оценка позиции (A / A (-) / B / C)
+var COL_ACCOUNT_OLD = 21;  // U — аккаунт (историческое)
 
 var PROPS_SHEET = 'Props';
 var STATS_SHEET = 'Статистика';
@@ -146,6 +147,7 @@ function doPost(e) {
     if (data.action === 'fixDatesOnce')  return fixDatesOnce(ss, sheet);
     if (data.action === 'deleteTestRow') return deleteTestRow(sheet, data);
     if (data.action === 'setScreenshots') return remember(cache, cacheKey, setScreenshots(sheet, data));
+    if (data.action === 'addResult1hColumn') return addResult1hColumn(ss, sheet);
     if (data.action === 'setTimezone') {
       ss.setSpreadsheetTimeZone(data.timezone);
       return createResponse(true, 'timezone set', { timezone: ss.getSpreadsheetTimeZone() });
@@ -200,6 +202,26 @@ function deleteTestRow(sheet, data) {
 // Дозаполняет скрины таймфреймов (I–N) в уже записанной строке. Нужно, когда съёмщик
 // не справился в момент записи и скрины добираются потом командой /shots.
 // row: номер строки или 'last'. Занятые ячейки не трогаем, пока не передан overwrite.
+// Одноразовая миграция: вставляет колонку «Скрин закрытия 1ч» сразу после скрина
+// закрытия, чтобы два скрина лежали рядом. Всё правее — оценка, аккаунты и блок
+// пропов — сдвигается на колонку, поэтому следом перестраиваем шапку, формулы и
+// статистику. Повторный вызов ничего не делает.
+function addResult1hColumn(ss, sheet) {
+  if (String(sheet.getRange(1, COL_RESULT_1H).getValue()).indexOf('1ч') !== -1) {
+    return createResponse(true, 'уже сделано');
+  }
+
+  sheet.insertColumnAfter(COL_RESULT);
+  buildHeaders(sheet);
+  var rows = applyAllFormulas(sheet);
+  formatSheet(sheet);
+  var months = buildStats(ss, sheet);
+
+  return createResponse(true, 'колонка добавлена', {
+    formulas: rows, months: months, lastCol: sheet.getLastColumn()
+  });
+}
+
 function setScreenshots(sheet, data) {
   var row = String(data.row) === 'last' ? sheet.getLastRow() : Number(data.row);
   if (!row || row < 2 || row > sheet.getLastRow()) return createResponse(false, 'bad row');
@@ -702,6 +724,10 @@ function updateTradeResult(sheet, data) {
     sheet.getRange(row, COL_RESULT).setValue(data.result);
   }
 
+  if (!isEmpty(data.result1h)) {
+    sheet.getRange(row, COL_RESULT_1H).setValue(data.result1h);
+  }
+
   // выводы по сделке: при закрытии по частям дописываем, а не затираем
   if (!isEmpty(data.errors)) {
     var prevErrors = values[rowIndex][COL_ERRORS - 1];
@@ -909,7 +935,8 @@ function buildHeaders(sheet) {
   sheet.getRange(1, COL_TAKESTOP).setValue('Take/Stop (ист.)');
   sheet.getRange(1, COL_RISK_OLD).setValue('Risk (ист.)');
   sheet.getRange(1, COL_RR_OLD).setValue('RR (ист.)');
-  sheet.getRange(1, COL_RESULT).setValue('Скрин результата');
+  sheet.getRange(1, COL_RESULT).setValue('Скрин закрытия 5м');
+  sheet.getRange(1, COL_RESULT_1H).setValue('Скрин закрытия 1ч');
   sheet.getRange(1, COL_GRADE).setValue('Оценка');
   sheet.getRange(1, COL_ACCOUNT_OLD).setValue('Аккаунты');
 

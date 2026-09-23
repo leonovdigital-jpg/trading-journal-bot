@@ -1,8 +1,10 @@
 // HTTP-сервис поверх снапшотов. Слушает только localhost: бот живёт на этой же машине,
 // наружу ничего открывать не нужно.
 //
-// POST /snapshots { symbol, dxy? } → { links: { "1h": url, "4h": url, "1d": url,
-//                                               "dxy1h": url, "dxy4h": url, "dxy1d": url } }
+// POST /snapshots { symbol, tfs?, dxy? } → { links: { ... } }
+//   tfs  — список таймфреймов, по умолчанию ["1h","4h","1d"] (ещё умеет "5m", "15m")
+//   dxy  — символ индекса доллара; null отключает его съёмку (нужно при закрытии сделки)
+// Ключи ответа: таймфрейм актива как есть ("1h"), у DXY с приставкой ("dxy1h").
 // GET  /health                     → { ok, loggedIn, busy }
 const express = require("express");
 const { takeSnapshots, getPage, isLoggedIn } = require("./snapshot");
@@ -37,18 +39,23 @@ app.post("/snapshots", async (req, res) => {
   const symbol = String(req.body && req.body.symbol || "").trim();
   if (!symbol) return res.status(400).json({ error: "нет символа" });
 
-  const dxy = String(req.body && req.body.dxy || DXY).trim();
+  const body = req.body || {};
+  const tfs = Array.isArray(body.tfs) && body.tfs.length ? body.tfs : ["1h", "4h", "1d"];
+  const dxy = body.dxy === null || body.dxy === false ? null : String(body.dxy || DXY).trim();
   const started = Date.now();
-  console.log(`задача: ${symbol} + ${dxy}${busy ? " (ждёт очереди)" : ""}`);
+  console.log(`задача: ${symbol} [${tfs.join(", ")}]${dxy ? " + " + dxy : ""}${busy ? " (ждёт очереди)" : ""}`);
 
   serialize(async () => {
     busy = true;
     try {
-      const raw = await takeSnapshots([symbol, dxy], { restoreSymbol: symbol });
-      const links = {
-        "1h": raw[symbol + " 1h"], "4h": raw[symbol + " 4h"], "1d": raw[symbol + " 1d"],
-        dxy1h: raw[dxy + " 1h"], dxy4h: raw[dxy + " 4h"], dxy1d: raw[dxy + " 1d"]
-      };
+      const symbols = dxy ? [symbol, dxy] : [symbol];
+      const raw = await takeSnapshots(symbols, { tfs: tfs, restoreSymbol: symbol });
+
+      const links = {};
+      tfs.forEach(function (tf) {
+        links[tf] = raw[symbol + " " + tf];
+        if (dxy) links["dxy" + tf] = raw[dxy + " " + tf];
+      });
       const missing = Object.entries(links).filter(([, v]) => !v).map(([k]) => k);
       if (missing.length) throw new Error("не снялось: " + missing.join(", "));
       console.log(`готово за ${((Date.now() - started) / 1000).toFixed(0)} с`);
