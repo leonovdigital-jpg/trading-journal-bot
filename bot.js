@@ -159,6 +159,36 @@ async function workerHealth() {
   }
 }
 
+// Сессию бот определяет сам по времени входа. Границы заданы в МЕСТНОМ времени бирж,
+// а не в минском: Минск часы не переводит, Лондон и Нью-Йорк переводят, поэтому привязка
+// к «10:00 по Минску» ломалась бы дважды в год (и ещё в те недели, когда Европа и США
+// переводят часы в разные дни). Intl считает смещения сам, библиотек не нужно.
+//
+//   LO   — с открытия Лондона, 08:00 по Лондону  (сейчас 10:00 по Минску)
+//   NY   — с начала Нью-Йорка, 08:00 по Нью-Йорку (сейчас 15:00)
+//   NYSE — со звонка биржи, 09:30 по Нью-Йорку, до закрытия в 16:00 (сейчас 16:30)
+//
+// Вне этих окон (раннее утро, вечер после закрытия, выходные) бот не угадывает — спрашивает.
+function minutesIn(date, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone, hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short'
+  }).formatToParts(date);
+  const get = type => parts.find(p => p.type === type).value;
+  return { minutes: Number(get('hour')) * 60 + Number(get('minute')), weekday: get('weekday') };
+}
+
+function detectSession(date = new Date()) {
+  const ny = minutesIn(date, 'America/New_York');
+  const lo = minutesIn(date, 'Europe/London');
+
+  if (ny.weekday === 'Sat' || ny.weekday === 'Sun') return null;
+
+  if (ny.minutes >= 9 * 60 + 30 && ny.minutes < 16 * 60) return 'NYSE';
+  if (ny.minutes >= 8 * 60 && ny.minutes < 9 * 60 + 30) return 'NY';
+  if (lo.minutes >= 8 * 60 && ny.minutes < 8 * 60) return 'LO';
+  return null;
+}
+
 function parseNumber(text) {
   const cleaned = String(text).trim().replace(/\s/g, '').replace(',', '.').replace(/^\+/, '');
   if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
@@ -343,6 +373,43 @@ async function askRiskForNext(ctx, state) {
     ? `Риск на ${name} — сколько $? (аккаунт ${size.toLocaleString('ru-RU')}$)`
     : `Риск на ${name} (% от размера аккаунта)? Размер в Props не задан`;
   await ctx.reply(question, { reply_markup: riskKeyboard(size) });
+}
+
+function sessionKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: 'LO', callback_data: 'session_LO' }],
+      [{ text: 'NY', callback_data: 'session_NY' }],
+      [{ text: 'NYSE', callback_data: 'session_NYSE' }]
+    ]
+  };
+}
+
+function positionKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: 'Long', callback_data: 'pos_Long' }],
+      [{ text: 'Short', callback_data: 'pos_Short' }]
+    ]
+  };
+}
+
+// Сессию берём из времени входа и спрашиваем, только если оно вне торговых окон
+// (раннее утро, вечер после закрытия NYSE, выходные).
+async function afterAsset(ctx, state) {
+  const session = detectSession();
+
+  if (session) {
+    state.session = session;
+    state.step = 'waiting_position';
+    userStates.set(ctx.chat.id, state);
+    await ctx.reply(`Сессия: ${session}\n\nLong или Short?`, { reply_markup: positionKeyboard() });
+    return;
+  }
+
+  state.step = 'waiting_session';
+  userStates.set(ctx.chat.id, state);
+  await ctx.reply('Сейчас вне твоих сессий — выбери вручную:', { reply_markup: sessionKeyboard() });
 }
 
 function gradeKeyboard() {
@@ -680,18 +747,9 @@ bot.on('text', async (ctx) => {
           const snapshots = requestSnapshots(symbol);
           snapshots.catch(() => {});   // ошибку разберём при записи, здесь только чтобы не падать
 
-          userStates.set(chatId, { links: [links[0]], asset, symbol, snapshots, step: 'waiting_session' });
-
+          const state = { links: [links[0]], asset, symbol, snapshots };
           await ctx.reply(`✅ ${asset} · снимок 1-5m принят\n\n⏳ 1h, 4h, 1d и DXY снимаю сам — будут готовы к концу опроса.`);
-          await ctx.reply('Какая сессия?', {
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: 'LO', callback_data: 'session_LO' }],
-                [{ text: 'NY', callback_data: 'session_NY' }],
-                [{ text: 'NYSE', callback_data: 'session_NYSE' }]
-              ]
-            }
-          });
+          await afterAsset(ctx, state);
           return;
         }
         await ctx.reply('Не понял символ из ссылки — дальше вручную.');
@@ -787,34 +845,22 @@ bot.on('callback_query', async (ctx) => {
 
     if (data.startsWith('asset_')) {
       state.asset = data.replace('asset_', '');
-      state.step = 'waiting_session';
-      userStates.set(chatId, state);
-
-      await ctx.reply('Какая сессия?', {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'LO', callback_data: 'session_LO' }],
-            [{ text: 'NY', callback_data: 'session_NY' }],
-            [{ text: 'NYSE', callback_data: 'session_NYSE' }]
-          ]
-        }
-      });
+      await afterAsset(ctx, state);
 
     } else if (data.startsWith('session_')) {
       state.session = data.replace('session_', '');
       state.step = 'waiting_position';
       userStates.set(chatId, state);
 
-      await ctx.reply('Long или Short?', {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'Long', callback_data: 'pos_Long' }],
-            [{ text: 'Short', callback_data: 'pos_Short' }]
-          ]
-        }
-      });
+      await ctx.reply('Long или Short?', { reply_markup: positionKeyboard() });
 
     } else if (data.startsWith('pos_')) {
+      // Без этой проверки кнопка Long/Short, нажатая на шаге выбора сессии,
+      // протаскивала диалог дальше, и сделка записывалась с пустой сессией.
+      if (state.step !== 'waiting_position') {
+        await ctx.answerCbQuery('Сначала выбери сессию');
+        return;
+      }
       state.position = data.replace('pos_', '');
       state.step = 'waiting_accounts';
       const info = await fetchPropInfo();
@@ -954,7 +1000,7 @@ app.post('/bot', (req, res) => {
 // При require из тестов сервер не поднимаем — только экспортируем функции
 module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
-  parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct
+  parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession
 };
 
 // На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит
