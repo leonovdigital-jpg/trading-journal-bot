@@ -114,9 +114,18 @@ async function takeSnapshots(symbols, opts = {}) {
       await page.locator("#header-toolbar-screenshot").click();
       await page.waitForTimeout(700);
       await page.getByText("Copy link", { exact: true }).click();
-      const id = (await (await respP).text()).trim();
+      const resp = await respP;
+      const id = (await resp.text()).trim();
       await page.keyboard.press("Escape");
       await page.waitForTimeout(400);
+
+      // На обслуживании TradingView отдаёт на этот POST HTML-страницу вместо номера
+      // снимка. Раньше она целиком уезжала в ссылку и в журнал (25.09, колонка S:
+      // «https://www.tradingview.com/x/<!DOCTYPE html>…» на всю ячейку).
+      if (!/^[A-Za-z0-9_-]{6,24}$/.test(id)) {
+        const hint = id.replace(/\s+/g, " ").slice(0, 80);
+        throw new Error(`TradingView не отдал снимок (HTTP ${resp.status()}): ${hint}`);
+      }
 
       out[symbol + " " + name] = "https://www.tradingview.com/x/" + id + "/";
     }

@@ -37,6 +37,18 @@ function isEmpty(value) {
   return value === null || value === undefined || String(value).trim() === '';
 }
 
+// Ссылка на скрин или ничего. 25.09 TradingView ушёл на обслуживание, отдал вместо
+// номера снимка HTML-страницу, и она целиком уехала в ячейку закрытия. Журнал —
+// последний рубеж: что не похоже на короткую ссылку, в него не попадает.
+function cleanLink(value) {
+  if (isEmpty(value)) return '';
+  var text = String(value).trim();
+  if (text.length > 300) return '';
+  if (/[<>\s]/.test(text)) return '';
+  if (!/^https?:\/\//.test(text)) return '';
+  return text;
+}
+
 function fmt(value, tz, pattern) {
   if (value instanceof Date) return Utilities.formatDate(value, tz, pattern);
   return String(value || '');
@@ -147,6 +159,7 @@ function doPost(e) {
     if (data.action === 'fixDatesOnce')  return fixDatesOnce(ss, sheet);
     if (data.action === 'deleteTestRow') return deleteTestRow(sheet, data);
     if (data.action === 'setScreenshots') return remember(cache, cacheKey, setScreenshots(sheet, data));
+    if (data.action === 'clearCells')    return clearCells(sheet, data);
     if (data.action === 'addResult1hColumn') return addResult1hColumn(ss, sheet);
     if (data.action === 'setTimezone') {
       ss.setSpreadsheetTimeZone(data.timezone);
@@ -222,6 +235,32 @@ function addResult1hColumn(ss, sheet) {
   });
 }
 
+// Точечно стереть ячейки: { row: 58, cols: ['S'] }. Нужно, когда в журнал
+// всё-таки попало что-то негодное и это надо убрать, не трогая соседние колонки.
+function clearCells(sheet, data) {
+  var row = String(data.row) === 'last' ? sheet.getLastRow() : Number(data.row);
+  if (!row || row < 2 || row > sheet.getLastRow()) return createResponse(false, 'bad row');
+
+  var cols = data.cols || [];
+  var cleared = [];
+  cols.forEach(function (name) {
+    var col = colIndex(name);
+    if (!col) return;
+    sheet.getRange(row, col).clearContent();
+    cleared.push(name);
+  });
+
+  return createResponse(true, 'cleared', { row: row, cleared: cleared });
+}
+
+function colIndex(name) {
+  var text = String(name).toUpperCase().replace(/[^A-Z]/g, '');
+  if (!text) return 0;
+  var n = 0;
+  for (var i = 0; i < text.length; i++) n = n * 26 + (text.charCodeAt(i) - 64);
+  return n;
+}
+
 function setScreenshots(sheet, data) {
   var row = String(data.row) === 'last' ? sheet.getLastRow() : Number(data.row);
   if (!row || row < 2 || row > sheet.getLastRow()) return createResponse(false, 'bad row');
@@ -234,6 +273,7 @@ function setScreenshots(sheet, data) {
   var skipped = [];
 
   cells.forEach(function (cell) {
+    cell[1] = cleanLink(cell[1]);
     if (isEmpty(cell[1])) return;
     if (!data.overwrite && !isEmpty(sheet.getRange(row, cell[0]).getValue())) {
       skipped.push(a1col(cell[0]));
@@ -661,13 +701,13 @@ function addNewTrade(sheet, data) {
     data.thoughts || '',
     data.position || '',
     data.errors || '',
-    shot5m,
-    data.screenshot1h || '',
-    data.screenshot4h || '',
-    data.screenshot1d || '',
-    data.dxySmt1 || '',
-    data.dxySmt4 || '',
-    data.dxySmt1d || ''
+    cleanLink(shot5m),
+    cleanLink(data.screenshot1h),
+    cleanLink(data.screenshot4h),
+    cleanLink(data.screenshot1d),
+    cleanLink(data.dxySmt1),
+    cleanLink(data.dxySmt4),
+    cleanLink(data.dxySmt1d)
   ];
 
   sheet.appendRow(row);
@@ -725,12 +765,12 @@ function updateTradeResult(sheet, data) {
 
   var row = rowIndex + 1;
 
-  if (!isEmpty(data.result)) {
-    sheet.getRange(row, COL_RESULT).setValue(data.result);
+  if (cleanLink(data.result)) {
+    sheet.getRange(row, COL_RESULT).setValue(cleanLink(data.result));
   }
 
-  if (!isEmpty(data.result1h)) {
-    sheet.getRange(row, COL_RESULT_1H).setValue(data.result1h);
+  if (cleanLink(data.result1h)) {
+    sheet.getRange(row, COL_RESULT_1H).setValue(cleanLink(data.result1h));
   }
 
   // выводы по сделке: при закрытии по частям дописываем, а не затираем
