@@ -160,6 +160,7 @@ function doPost(e) {
     if (data.action === 'deleteTestRow') return deleteTestRow(sheet, data);
     if (data.action === 'setScreenshots') return remember(cache, cacheKey, setScreenshots(sheet, data));
     if (data.action === 'clearCells')    return clearCells(sheet, data);
+    if (data.action === 'setCells')      return setCells(sheet, data);
     if (data.action === 'addResult1hColumn') return addResult1hColumn(ss, sheet);
     if (data.action === 'setTimezone') {
       ss.setSpreadsheetTimeZone(data.timezone);
@@ -233,6 +234,29 @@ function addResult1hColumn(ss, sheet) {
   return createResponse(true, 'колонка добавлена', {
     formulas: rows, months: months, lastCol: sheet.getLastColumn()
   });
+}
+
+// Точечно вписать значения: { row: 54, values: { AE: -981 } }. Нужно, когда в сумме
+// ошибся человек, а не бот: % и RR — формулы, они пересчитаются сами.
+// Формулы не принимаем: чинить данные и чинить расчёт — разные вещи.
+function setCells(sheet, data) {
+  var row = String(data.row) === 'last' ? sheet.getLastRow() : Number(data.row);
+  if (!row || row < 2 || row > sheet.getLastRow()) return createResponse(false, 'bad row');
+
+  var values = data.values || {};
+  var written = [];
+
+  for (var name in values) {
+    var col = colIndex(name);
+    if (!col) continue;
+    var v = values[name];
+    if (typeof v === 'string' && v.charAt(0) === '=') continue;
+    var was = sheet.getRange(row, col).getValue();
+    sheet.getRange(row, col).setValue(v);
+    written.push({ col: name, was: was, now: v });
+  }
+
+  return createResponse(true, 'cells set', { row: row, written: written });
 }
 
 // Точечно стереть ячейки: { row: 58, cols: ['S'] }. Нужно, когда в журнал
