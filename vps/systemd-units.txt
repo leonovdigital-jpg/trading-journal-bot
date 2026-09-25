@@ -32,6 +32,10 @@ WorkingDirectory=/home/ubuntu/tv-worker
 ExecStart=/usr/bin/node worker.js
 Restart=always
 RestartSec=5
+# Страховка от утечки: 25.09 воркер раздулся до 1.45 ГБ на брошенных CDP-подключениях
+# и утянул за собой браузер. Теперь при раздутии его убьёт systemd и сразу поднимет
+# заново — это потеря одной съёмки вместо потери съёмщика на двое суток.
+MemoryMax=1200M
 
 [Install]
 WantedBy=multi-user.target
@@ -60,3 +64,27 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 
+
+### tv-browser-restart.service + .timer
+# Chromium, работающий неделями, деградирует незаметно. Раз в сутки поднимаем его
+# заново — в 02:30 UTC (05:30 по Минску), до начала лондонской сессии и после окна
+# обновлений snap (01:00-02:00 UTC).
+
+# /etc/systemd/system/tv-browser-restart.service
+[Unit]
+Description=Nightly restart of the TradingView browser
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart tv-browser.service
+
+# /etc/systemd/system/tv-browser-restart.timer
+[Unit]
+Description=Nightly restart of the TradingView browser
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

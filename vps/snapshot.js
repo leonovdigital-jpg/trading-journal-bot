@@ -7,7 +7,8 @@
 //   поэтому символ приходит снаружи, из ссылки пользователя, и не зашит в код;
 // - ссылку берём из ответа POST /snapshot/ на «Copy link»: «Open in new tab» открывает
 //   вкладку, которая иногда виснет намертво и вешает весь Playwright;
-// - браузер по CDP НЕ закрываем: close() убил бы постоянный сервис tv-browser.
+// - браузер по CDP НЕ закрываем: close() убил бы постоянный сервис tv-browser,
+//   поэтому подключение одно на весь процесс и переиспользуется (см. getPage).
 const { chromium } = require("playwright-core");
 
 const CDP = "http://127.0.0.1:9222";
@@ -15,13 +16,41 @@ const OFFSET = 0.15;                                   // сдвиг графи�
 const TF_KEYS = { "5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "1D" };
 const DEFAULT_TFS = ["1h", "4h", "1d"];
 
-async function getPage() {
-  const b = await chromium.connectOverCDP(CDP);
-  const ctx = b.contexts()[0];
-  if (!ctx) throw new Error("браузер без контекста — сервис tv-browser не поднялся?");
+// Подключение держим одно на весь процесс. Раньше connectOverCDP звался на каждую
+// задачу и на каждую проверку здоровья, а закрыть подключение нечем (close() убивает
+// сам браузер) — за двое суток накопилось 1222 живых соединения. Chromium рассылает
+// события во все разом: съёмка расползлась с 84 секунд до 931, а потом браузер вовсе
+// перестал принимать новые подключения (25.09, сделка осталась без скринов).
+let cached = null;
+
+function pickPage(browser) {
+  const ctx = browser.contexts()[0];
+  if (!ctx) return null;
   const page = ctx.pages().find(p => p.url().includes("tradingview.com/chart")) || ctx.pages()[0];
-  if (!page) throw new Error("нет вкладки с графиком");
+  if (!page) return null;
   page.on("dialog", d => d.dismiss().catch(() => {}));
+  return page;
+}
+
+async function getPage() {
+  if (cached && !cached.browser.isConnected()) cached = null;
+
+  if (cached) {
+    if (!cached.page.isClosed()) return cached.page;
+    // Вкладку переоткрыли — ищем новую в ТОМ ЖЕ подключении. Переподключаться нельзя:
+    // старое соединение не закрыть (close() убьёт браузер), и оно осталось бы висеть.
+    const page = pickPage(cached.browser);
+    if (page) { cached.page = page; return page; }
+    cached = null;
+  }
+
+  const browser = await chromium.connectOverCDP(CDP, { timeout: 30000 });
+  browser.on("disconnected", () => { cached = null; });
+
+  const page = pickPage(browser);
+  if (!page) throw new Error("нет вкладки с графиком — сервис tv-browser не поднялся?");
+
+  cached = { browser: browser, page: page };
   return page;
 }
 
