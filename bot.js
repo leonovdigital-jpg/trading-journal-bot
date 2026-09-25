@@ -309,9 +309,71 @@ async function checkWorker() {
   );
 }
 
+// Проверка здоровья отвечает «жив», даже когда съёмщик уже еле дышит: она только
+// смотрит, есть ли вкладка и не разлогинило ли TradingView. А ломалось дважды иначе —
+// снимать он продолжал, но всё медленнее (84 секунды → 931), пока не упёрся совсем.
+// Поэтому раз в сутки перед лондонской сессией бот делает настоящий пробный снимок
+// и меряет время. Так поломка находится за завтраком, а не в момент входа.
+const CANARY_HHMM = process.env.CANARY_HHMM || '09:00';         // по Минску, до открытия LO
+const CANARY_SLOW_SEC = Number(process.env.CANARY_SLOW_SEC || 180);
+let canaryDoneOn = null;
+
+function minskDay(date) {
+  return new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Minsk' }).format(date);
+}
+
+async function runCanary() {
+  const symbol = Object.values(loadSymbols())[0];
+  if (!symbol) return;                                          // ещё не знаем ни одного символа
+
+  const started = Date.now();
+  try {
+    const links = await requestSnapshots(symbol, { tfs: ['1h'], dxy: null });
+    const seconds = Math.round((Date.now() - started) / 1000);
+
+    if (!links || !links['1h']) {
+      await notifyAdmin('⚠️ *Утренняя проверка:* съёмщик ответил, но ссылки не дал. Скрины сегодня могут не сняться.');
+      return;
+    }
+    if (seconds > CANARY_SLOW_SEC) {
+      await notifyAdmin(
+        `⚠️ *Утренняя проверка:* съёмка заняла ${seconds} с вместо обычных 80–90.\n` +
+        'Съёмщик тормозит — скорее всего скоро отвалится. Скажи мне, я посмотрю.'
+      );
+      return;
+    }
+    await notifyAdmin(`🌅 Проверка перед сессией: всё работает, пробная съёмка ${seconds} с.`);
+  } catch (error) {
+    await notifyAdmin(
+      `⚠️ *Утренняя проверка не прошла:* ${error.message}\n` +
+      'Скрины сегодня не снимутся. Сделки записывай как обычно — дошлю, когда починится.'
+    );
+  }
+}
+
+// Дёргается тем же таймером, что и проверка здоровья: отдельный будильник не нужен,
+// достаточно раз в пять минут смотреть на часы и запоминать, за какой день уже сделано.
+async function maybeRunCanary() {
+  if (!WORKER_URL) return;
+  const now = new Date();
+  const day = minskDay(now);
+  if (canaryDoneOn === day) return;
+
+  const [hh, mm] = CANARY_HHMM.split(':').map(Number);
+  if (minutesIn(now, 'Europe/Minsk').minutes < hh * 60 + mm) return;
+
+  canaryDoneOn = day;                                           // ставим до запуска: один раз в сутки, чем бы ни кончилось
+  await runCanary();
+}
+
 function startWatchdog() {
   if (!WORKER_URL || watchTimer) return;
-  watchTimer = setInterval(() => { checkWorker().catch(() => {}); }, WATCH_INTERVAL);
+  // При старте день считаем уже проверенным, иначе перезапуск бота днём
+  // тут же выстрелил бы утренней проверкой.
+  canaryDoneOn = minskDay(new Date());
+  watchTimer = setInterval(() => {
+    checkWorker().then(maybeRunCanary).catch(() => {});
+  }, WATCH_INTERVAL);
   watchTimer.unref();
 }
 
@@ -1216,7 +1278,7 @@ app.post('/bot', (req, res) => {
 module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
-  checkWorker, notifyAdmin
+  checkWorker, notifyAdmin, runCanary, maybeRunCanary
 };
 
 // На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит
