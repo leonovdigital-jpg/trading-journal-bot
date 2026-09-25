@@ -298,6 +298,7 @@ function dumpSheet(sheet, data) {
   // from: 'last' отдаёт последние rows строк — так удобно смотреть свежие сделки.
   var from = String(data.from || '') === 'last' ? Math.max(1, values.length - rows + 1)
            : Math.max(1, Number(data.from || 1));
+  var width = Math.min(2000, Number(data.width || 40));   // сколько символов ячейки показывать
   var out = [];
 
   for (var i = from - 1; i < Math.min(values.length, from - 1 + rows + (from === 1 ? 1 : 0)); i++) {
@@ -305,7 +306,7 @@ function dumpSheet(sheet, data) {
     for (var j = 0; j < values[i].length; j++) {
       var v = values[i][j];
       var type = v instanceof Date ? 'Date' : typeof v;
-      row.push(a1col(j + 1) + ':' + type + ':' + String(v).slice(0, 40));
+      row.push(a1col(j + 1) + ':' + type + ':' + String(v).slice(0, width));
     }
     out.push(row);
   }
