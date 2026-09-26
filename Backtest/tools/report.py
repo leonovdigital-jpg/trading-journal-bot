@@ -223,11 +223,26 @@ def build(folder: Path):
         res = RES_ICON[c["res"]] + (f" {c['resT'][11:]}" if c["resT"] else "")
         flags = (" · первый" if c["first"] else "") + (" · конфликт" if c["conflict"] else "")
         day = c["day"]
-        img = f"[день](days/{day}.png)" if (folder / "days" / f"{day}.png").exists() else "—"
+        img = f"[{day}](#{day})" if (folder / "days" / f"{day}.png").exists() else "—"
         L.append(f"| {c['t']} | {SESS[c['sess']]}{flags} | {'лонг' if c['dir'] == 'L' else 'шорт'} | {c['close']:.1f} | "
                  f"{c['lvl']:.1f} ({c['origin']}, {c['lvlT'][11:]}) | {ta} | {tb} | {res} | "
                  f"{f0(c['mfe'])} / {f0(c['mae'])} | {img} |")
     L.append("")
+
+    L.append("## По дням\n")
+    L.append("Серым — Азия, фиолетовым — Франкфурт, зелёным — Лондон, голубым — США. Оранжевая линия — уровень фрактала, "
+             "зелёный пунктир — цель по направлению, красный — цель против (подпись у правого края). "
+             "Метки F/L/U — сигналы сессий, ✅❌ — какая цель задета первой. Время на шкале — по Минску.\n")
+    for day in sig_days:
+        if not (folder / "days" / f"{day}.png").exists():
+            continue
+        L.append(f'<a id="{day}"></a>\n')
+        L.append(f"### {day}\n")
+        for c in by_day[day]:
+            L.append(f"- {c['t'][11:]} {SESS[c['sess']]} — {'лонг' if c['dir'] == 'L' else 'шорт'} "
+                     f"за уровнем {c['lvl']:.1f} ({c['origin']}) → {RES_ICON[c['res']]}"
+                     + (f" в {c['resT'][11:]}" if c["resT"] else ""))
+        L.append(f"\n![{day}](days/{day}.png)\n")
 
     L.append("## Ограничения этого прогона\n")
     L.append("- Пилот на одном месяце — только проверка правил и вида отчёта.")
