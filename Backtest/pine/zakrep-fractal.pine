@@ -1,0 +1,409 @@
+//@version=6
+// Идея 1: закреп часовой свечи за последним фракталом → куда пойдёт цена.
+// Каскад Франкфурт → Лондон → США, цели — нетронутые фракталы и имбалансы H4/D/W/M.
+// Правила подтверждены пользователем 26.09.2026, см. knowledge-base/US30.md.
+indicator("BT: закреп за фракталом", shorttitle = "BT закреп", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ───────── Настройки
+startT = input.time(1735678800000, "Начало периода")  // 01.01.2025 00:00 Минск
+endT   = input.time(1738357200000, "Конец периода")  // 01.02.2025 00:00 Минск
+doLog  = input.bool(true, "Писать случаи в Pine Logs")
+showBg = input.bool(true, "Подсвечивать сессии")
+showBase = input.bool(true, "Логировать базовую частоту (каждая свеча сессий)")
+
+// ───────── Сессии: время привязано к биржам, переход на летнее время учитывается сам
+hB(int t) => hour(t, "Europe/Berlin")
+hL(int t) => hour(t, "Europe/London")
+hN(int t) => hour(t, "America/New_York")
+isAsia(int t) => hB(t) >= 1 and hB(t) <= 7
+isFrank(int t) => hB(t) == 8
+isLondon(int t) => hL(t) >= 8 and hL(t) <= 12 and hN(t) < 8
+isUS(int t) => hN(t) >= 8 and hN(t) < 17
+sessCode(int t) => isFrank(t) ? "F" : isLondon(t) ? "L" : isUS(t) ? "U" : isAsia(t) ? "A" : "N"
+sessName(string s) => s == "F" ? "Франк" : s == "L" ? "Лондон" : s == "U" ? "США" : s == "A" ? "Азия" : "вне сессий"
+sessIdx(string s) => s == "F" ? 0 : s == "L" ? 1 : 2
+tfName(int tf) => tf == 0 ? "H4" : tf == 1 ? "D" : tf == 2 ? "W" : "M"
+kindName(int k) => k == 1 ? "фрактал" : "имбаланс"
+fmtT(int t) => na(t) ? "" : str.format_time(t, "yyyy-MM-dd HH:mm", "Europe/Minsk")
+f1(float x) => na(x) ? "" : str.tostring(x, "#.#")
+
+// ───────── Торговый день
+dayStart = time("D")
+newDay = bar_index > 0 and dayStart != dayStart[1]
+var int dayN = 0
+if newDay
+    dayN += 1
+
+// ───────── Цели старших таймфреймов
+// Считается в контексте старшего ТФ по уже закрытым барам ([1] и глубже), поэтому без заглядывания вперёд.
+// a* — зоны выше цены (верхние фракталы, медвежьи имбалансы), b* — ниже (нижние фракталы, бычьи имбалансы).
+// kind 1 = фрактал: достигнут, когда фитиль дошёл до уровня. kind 2 = имбаланс: цена зашла за ближнюю границу.
+f_zones() =>
+    var aL = array.new<float>()
+    var aK = array.new<int>()
+    var aT = array.new<int>()
+    var bL = array.new<float>()
+    var bK = array.new<int>()
+    var bT = array.new<int>()
+    h1 = high[1]
+    l1 = low[1]
+    h2 = high[2]
+    l2 = low[2]
+    h3 = high[3]
+    l3 = low[3]
+    t2 = time[2]
+    if bar_index >= 4
+        n = aL.size()
+        if n > 0
+            for i = n - 1 to 0
+                lv = aL.get(i)
+                k = aK.get(i)
+                if (k == 1 and h1 >= lv) or (k == 2 and h1 > lv)
+                    aL.remove(i)
+                    aK.remove(i)
+                    aT.remove(i)
+        m = bL.size()
+        if m > 0
+            for i = m - 1 to 0
+                lv = bL.get(i)
+                k = bK.get(i)
+                if (k == 1 and l1 <= lv) or (k == 2 and l1 < lv)
+                    bL.remove(i)
+                    bK.remove(i)
+                    bT.remove(i)
+        if h2 > h3 and h2 > h1
+            aL.push(h2)
+            aK.push(1)
+            aT.push(t2)
+        if l2 < l3 and l2 < l1
+            bL.push(l2)
+            bK.push(1)
+            bT.push(t2)
+        if h3 < l1
+            bL.push(l1)
+            bK.push(2)
+            bT.push(t2)
+        if l3 > h1
+            aL.push(h1)
+            aK.push(2)
+            aT.push(t2)
+    [aL, aK, aT, bL, bK, bT]
+
+[h4aL, h4aK, h4aT, h4bL, h4bK, h4bT] = request.security(syminfo.tickerid, "240", f_zones(), lookahead = barmerge.lookahead_on)
+[d1aL, d1aK, d1aT, d1bL, d1bK, d1bT] = request.security(syminfo.tickerid, "D", f_zones(), lookahead = barmerge.lookahead_on)
+[w1aL, w1aK, w1aT, w1bL, w1bK, w1bT] = request.security(syminfo.tickerid, "W", f_zones(), lookahead = barmerge.lookahead_on)
+[mnaL, mnaK, mnaT, mnbL, mnbK, mnbT] = request.security(syminfo.tickerid, "M", f_zones(), lookahead = barmerge.lookahead_on)
+
+type Zone
+    float lvl
+    int kind
+    int t
+    int tf
+
+var above = array.new<Zone>()
+var below = array.new<Zone>()
+
+refreshTf(int tf, array<float> aL, array<int> aK, array<int> aT, array<float> bL, array<int> bK, array<int> bT) =>
+    if above.size() > 0
+        for i = above.size() - 1 to 0
+            if above.get(i).tf == tf
+                above.remove(i)
+    if below.size() > 0
+        for i = below.size() - 1 to 0
+            if below.get(i).tf == tf
+                below.remove(i)
+    if not na(aL)
+        if aL.size() > 0
+            for i = 0 to aL.size() - 1
+                above.push(Zone.new(aL.get(i), aK.get(i), aT.get(i), tf))
+    if not na(bL)
+        if bL.size() > 0
+            for i = 0 to bL.size() - 1
+                below.push(Zone.new(bL.get(i), bK.get(i), bT.get(i), tf))
+
+if barstate.isfirst or timeframe.change("240")
+    refreshTf(0, h4aL, h4aK, h4aT, h4bL, h4bK, h4bT)
+if barstate.isfirst or timeframe.change("D")
+    refreshTf(1, d1aL, d1aK, d1aT, d1bL, d1bK, d1bT)
+if barstate.isfirst or timeframe.change("W")
+    refreshTf(2, w1aL, w1aK, w1aT, w1bL, w1bK, w1bT)
+if barstate.isfirst or timeframe.change("M")
+    refreshTf(3, mnaL, mnaK, mnaT, mnbL, mnbK, mnbT)
+
+// ───────── Случаи и «гонки» базовой частоты
+type Case
+    int day
+    int bar
+    int t
+    string sess
+    int dir
+    float c
+    float lvl
+    int lvlBar
+    int lvlT
+    string origin
+    bool conflict
+    bool body
+    bool first
+    float tA
+    int tfA
+    int kA
+    float tB
+    int tfB
+    int kB
+    string res
+    int resT
+    float mfe
+    float mae
+    int revT
+    float lonEnd
+    line lnA
+    line lnB
+
+type Race
+    int t
+    string sess
+    float up
+    int kUp
+    float dn
+    int kDn
+    string res
+
+var cases = array.new<Case>()
+var races = array.new<Race>()
+
+// статистика по сессиям F/L/U + «первый сигнал дня»: n, win, loss, both, none, noTarget
+var stN = array.new<int>(4, 0)
+var stW = array.new<int>(4, 0)
+var stL = array.new<int>(4, 0)
+var stB = array.new<int>(4, 0)
+var stO = array.new<int>(4, 0)
+var stLong = array.new<int>(4, 0)
+// база по сессиям: вверх первым / вниз первым
+var bsUp = array.new<int>(3, 0)
+var bsDn = array.new<int>(3, 0)
+
+hitAbove(float lv, int k) => not na(lv) and (k == 1 ? high >= lv : high > lv)
+hitBelow(float lv, int k) => not na(lv) and (k == 1 ? low <= lv : low < lv)
+
+finishCase(Case c, float dayEnd, int lastBar) =>
+    i = sessIdx(c.sess)
+    stN.set(i, stN.get(i) + 1)
+    if c.dir == 1
+        stLong.set(i, stLong.get(i) + 1)
+    if c.res == "WIN"
+        stW.set(i, stW.get(i) + 1)
+    else if c.res == "LOSS"
+        stL.set(i, stL.get(i) + 1)
+    else if c.res == "BOTH"
+        stB.set(i, stB.get(i) + 1)
+    else
+        stO.set(i, stO.get(i) + 1)
+    if c.first
+        stN.set(3, stN.get(3) + 1)
+        if c.dir == 1
+            stLong.set(3, stLong.get(3) + 1)
+        if c.res == "WIN"
+            stW.set(3, stW.get(3) + 1)
+        else if c.res == "LOSS"
+            stL.set(3, stL.get(3) + 1)
+        else if c.res == "BOTH"
+            stB.set(3, stB.get(3) + 1)
+        else
+            stO.set(3, stO.get(3) + 1)
+    if not na(c.lnA)
+        c.lnA.set_x2(lastBar)
+        label.new(lastBar, c.tA, tfName(c.tfA) + " " + kindName(c.kA), style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.new(#1b8a3a, 0), size = size.tiny)
+    if not na(c.lnB)
+        c.lnB.set_x2(lastBar)
+        label.new(lastBar, c.tB, tfName(c.tfB) + " " + kindName(c.kB), style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.new(#c0392b, 0), size = size.tiny)
+    if doLog
+        lonMove = na(c.lonEnd) ? na : (c.lonEnd - c.c) * c.dir
+        dayMove = (dayEnd - c.c) * c.dir
+        log.info("CASE;" + fmtT(c.t) + ";" + c.sess + ";" + (c.dir == 1 ? "L" : "S") + ";" + f1(c.c) + ";" + f1(c.lvl) + ";" + fmtT(c.lvlT) + ";" + c.origin + ";" + (c.conflict ? "1" : "0") + ";" + (c.body ? "1" : "0") + ";" + (c.first ? "1" : "0") + ";" + f1(c.tA) + ";" + (na(c.tA) ? "" : tfName(c.tfA)) + ";" + (na(c.tA) ? "" : str.tostring(c.kA)) + ";" + f1(c.tB) + ";" + (na(c.tB) ? "" : tfName(c.tfB)) + ";" + (na(c.tB) ? "" : str.tostring(c.kB)) + ";" + c.res + ";" + fmtT(c.resT) + ";" + f1(c.mfe) + ";" + f1(c.mae) + ";" + f1(lonMove) + ";" + f1(dayMove) + ";" + fmtT(c.revT))
+
+finishRace(Race r) =>
+    i = sessIdx(r.sess)
+    if r.res == "UP"
+        bsUp.set(i, bsUp.get(i) + 1)
+    else if r.res == "DN"
+        bsDn.set(i, bsDn.get(i) + 1)
+    if doLog and showBase
+        log.info("RACE;" + fmtT(r.t) + ";" + r.sess + ";" + f1(r.up) + ";" + f1(r.dn) + ";" + r.res)
+
+// 0. Новый торговый день: закрываем все случаи прошлого дня
+var bool doneF = false
+var bool doneL = false
+var bool doneU = false
+var bool hadSig = false
+if newDay
+    for c in cases
+        finishCase(c, close[1], bar_index - 1)
+    for r in races
+        finishRace(r)
+    cases.clear()
+    races.clear()
+    doneF := false
+    doneL := false
+    doneU := false
+    hadSig := false
+
+// Конец Лондона: запоминаем закрытие для сигналов Франкфурта и Лондона
+if bar_index > 0 and isLondon(time[1]) and not isLondon(time)
+    for c in cases
+        if c.sess != "U" and na(c.lonEnd)
+            c.lonEnd := close[1]
+
+// 1. Движение после сигнала: какая цель первой, ход, обратный закреп
+for c in cases
+    if c.bar < bar_index
+        if c.res == "NONE"
+            hA = c.dir == 1 ? hitAbove(c.tA, c.kA) : hitBelow(c.tA, c.kA)
+            hBx = c.dir == 1 ? hitBelow(c.tB, c.kB) : hitAbove(c.tB, c.kB)
+            if hA or hBx
+                c.res := hA and hBx ? "BOTH" : hA ? "WIN" : "LOSS"
+                c.resT := time
+                txt = c.res == "WIN" ? "✅" : c.res == "LOSS" ? "❌" : "❓"
+                label.new(bar_index, c.dir == 1 ? (hA ? high : low) : (hA ? low : high), txt, style = label.style_none, size = size.small)
+        c.mfe := math.max(c.mfe, c.dir == 1 ? high - c.c : c.c - low)
+        c.mae := math.max(c.mae, c.dir == 1 ? c.c - low : high - c.c)
+        if na(c.revT) and ((c.dir == 1 and close < c.lvl) or (c.dir == -1 and close > c.lvl))
+            c.revT := time
+for r in races
+    if r.res == "NONE"
+        u = hitAbove(r.up, r.kUp)
+        d = hitBelow(r.dn, r.kDn)
+        if u or d
+            r.res := u and d ? "BOTH" : u ? "UP" : "DN"
+
+// 2. Снимаем зоны, которых коснулась текущая свеча
+if above.size() > 0
+    for i = above.size() - 1 to 0
+        z = above.get(i)
+        if hitAbove(z.lvl, z.kind)
+            above.remove(i)
+if below.size() > 0
+    for i = below.size() - 1 to 0
+        z = below.get(i)
+        if hitBelow(z.lvl, z.kind)
+            below.remove(i)
+
+nearestAbove() =>
+    Zone best = na
+    for z in above
+        if na(best) or z.lvl < best.lvl
+            best := z
+    best
+nearestBelow() =>
+    Zone best = na
+    for z in below
+        if na(best) or z.lvl > best.lvl
+            best := z
+    best
+
+// 3. Закреп текущей свечи за последним фракталом (известным до её закрытия)
+var float upLvl = na
+var int upBar = na
+var int upT = na
+var int upDay = na
+var float dnLvl = na
+var int dnBar = na
+var int dnT = na
+var int dnDay = na
+
+originOf(int ft, int fd) =>
+    d = fd == dayN ? "сегодня" : fd == dayN - 1 ? "вчера" : "ранее"
+    sessName(sessCode(ft)) + " " + d
+
+s = sessCode(time)
+inWin = time >= startT and time < endT
+sessOpen = s == "F" ? not doneF : s == "L" ? not doneL : s == "U" ? not doneU : false
+if inWin and sessOpen
+    longOk = not na(upLvl) and close > upLvl
+    shortOk = not na(dnLvl) and close < dnLvl
+    conflict = longOk and shortOk
+    dir = conflict ? (upBar > dnBar ? 1 : -1) : longOk ? 1 : shortOk ? -1 : 0
+    if dir != 0
+        za = dir == 1 ? nearestAbove() : nearestBelow()
+        zb = dir == 1 ? nearestBelow() : nearestAbove()
+        lvl = dir == 1 ? upLvl : dnLvl
+        lb = dir == 1 ? upBar : dnBar
+        c = Case.new(dayN, bar_index, time, s, dir, close, lvl, lb, dir == 1 ? upT : dnT, originOf(dir == 1 ? upT : dnT, dir == 1 ? upDay : dnDay), conflict, dir == 1 ? math.min(open, close) > lvl : math.max(open, close) < lvl, not hadSig, na(za) ? na : za.lvl, na(za) ? na : za.tf, na(za) ? na : za.kind, na(zb) ? na : zb.lvl, na(zb) ? na : zb.tf, na(zb) ? na : zb.kind, "NONE", na, 0.0, 0.0, na, na, na, na)
+        line.new(lb, lvl, bar_index, lvl, color = color.new(#f39c12, 0), width = 2)
+        if not na(c.tA)
+            c.lnA := line.new(bar_index, c.tA, bar_index, c.tA, color = color.new(#1b8a3a, 0), style = line.style_dashed, width = 2)
+        if not na(c.tB)
+            c.lnB := line.new(bar_index, c.tB, bar_index, c.tB, color = color.new(#c0392b, 0), style = line.style_dashed, width = 2)
+        tip = sessName(s) + (dir == 1 ? " ЛОНГ" : " ШОРТ") + "\n" + fmtT(time) + " (Минск)\nуровень " + f1(lvl) + " — " + c.origin + (conflict ? "\nконфликт фракталов" : "") + "\nцель по направлению: " + (na(c.tA) ? "нет" : f1(c.tA) + " " + tfName(c.tfA) + " " + kindName(c.kA)) + "\nцель против: " + (na(c.tB) ? "нет" : f1(c.tB) + " " + tfName(c.tfB) + " " + kindName(c.kB))
+        label.new(bar_index, dir == 1 ? low : high, s + (dir == 1 ? "▲" : "▼"), style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? color.new(#1b8a3a, 0) : color.new(#c0392b, 0), textcolor = color.white, size = size.small, tooltip = tip)
+        cases.push(c)
+        hadSig := true
+    if s == "F"
+        doneF := true
+    else if s == "L" and dir != 0
+        doneL := true
+    else if s == "U" and dir != 0
+        doneU := true
+
+// Базовая частота: от закрытия каждой свечи сессий — какая ближайшая зона первой, без всякого условия
+if inWin and (s == "F" or s == "L" or s == "U")
+    zu = nearestAbove()
+    zd = nearestBelow()
+    races.push(Race.new(time, s, na(zu) ? na : zu.lvl, na(zu) ? na : zu.kind, na(zd) ? na : zd.lvl, na(zd) ? na : zd.kind, "NONE"))
+
+// 4. Новые фракталы H1 (1 свеча слева и справа) — подтверждаются закрытием правой соседки
+upF = bar_index >= 2 and high[1] > high[2] and high[1] > high
+dnF = bar_index >= 2 and low[1] < low[2] and low[1] < low
+prevDay = newDay ? dayN - 1 : dayN
+if upF
+    upLvl := high[1]
+    upBar := bar_index - 1
+    upT := time[1]
+    upDay := prevDay
+if dnF
+    dnLvl := low[1]
+    dnBar := bar_index - 1
+    dnT := time[1]
+    dnDay := prevDay
+
+// значение — цена самого фрактала, а не 0/1: иначе TradingView уводит индикатор на отдельную шкалу
+plotshape(upF ? high[1] : na, "Фрактал верх", shape.triangledown, location.abovebar, color.new(#343a4a, 0), offset = -1, size = size.tiny)
+plotshape(dnF ? low[1] : na, "Фрактал низ", shape.triangleup, location.belowbar, color.new(#343a4a, 0), offset = -1, size = size.tiny)
+
+bgcolor(showBg and isAsia(time) ? color.new(color.gray, 85) : na, title = "Азия")
+bgcolor(showBg and isFrank(time) ? color.new(#8e44ad, 80) : na, title = "Франкфурт")
+bgcolor(showBg and isLondon(time) ? color.new(#27ae60, 88) : na, title = "Лондон")
+bgcolor(showBg and isUS(time) ? color.new(#2980b9, 92) : na, title = "США")
+
+// ───────── Табличка статистики
+pct(int a, int b) => b > 0 ? str.tostring(100.0 * a / b, "#") + "%" : "—"
+baseFor(int i) =>
+    // ожидаемый % по базе с учётом доли лонгов/шортов в сессии (для строки «первый сигнал» — по всем сессиям)
+    float up = 0.0
+    float dn = 0.0
+    if i < 3
+        up := bsUp.get(i)
+        dn := bsDn.get(i)
+    else
+        up := bsUp.get(0) + bsUp.get(1) + bsUp.get(2)
+        dn := bsDn.get(0) + bsDn.get(1) + bsDn.get(2)
+    n = stN.get(i)
+    nl = stLong.get(i)
+    tot = up + dn
+    tot > 0 and n > 0 ? str.tostring(100.0 * (nl * up / tot + (n - nl) * dn / tot) / n, "#") + "%" : "—"
+
+if barstate.islast
+    var tbl = table.new(position.top_right, 8, 5, bgcolor = color.new(color.white, 0), border_color = color.new(color.gray, 60), border_width = 1)
+    hdr = array.from("Сигнал", "Случаев", "✅", "❌", "❓", "⏳", "% ✅ из ✅+❌", "База")
+    for j = 0 to 7
+        tbl.cell(j, 0, hdr.get(j), text_size = size.small)
+    names = array.from("Франкфурт", "Лондон", "США", "Первый за день")
+    for i = 0 to 3
+        tbl.cell(0, i + 1, names.get(i), text_size = size.small)
+        tbl.cell(1, i + 1, str.tostring(stN.get(i)), text_size = size.small)
+        tbl.cell(2, i + 1, str.tostring(stW.get(i)), text_size = size.small)
+        tbl.cell(3, i + 1, str.tostring(stL.get(i)), text_size = size.small)
+        tbl.cell(4, i + 1, str.tostring(stB.get(i)), text_size = size.small)
+        tbl.cell(5, i + 1, str.tostring(stO.get(i)), text_size = size.small)
+        tbl.cell(6, i + 1, pct(stW.get(i), stW.get(i) + stL.get(i)), text_size = size.small)
+        tbl.cell(7, i + 1, baseFor(i), text_size = size.small)
