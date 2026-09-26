@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import md2html
+
 CASE_FIELDS = ["t", "sess", "dir", "close", "lvl", "lvlT", "origin", "conflict", "body", "first",
                "tA", "tfA", "kA", "tB", "tfB", "kB", "res", "resT", "mfe", "mae", "lonMove", "dayMove", "revT"]
 SESS = {"F": "Франкфурт", "L": "Лондон", "U": "США"}
@@ -251,6 +253,7 @@ def build(folder: Path):
     L.append("- Порядок касаний внутри одной часовой свечи не виден: такие случаи помечены ❓.")
     L.append("- Цели — только нетронутые на момент сигнала фракталы и имбалансы H4/D/W/M; задетая зона больше не цель.")
     (folder / "README.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+    md2html.build(folder / "README.md")  # то же в HTML — открывается в браузере вместе с картинками
     (folder / "cases.json").write_text(json.dumps({"cases": cases, "base": base}, ensure_ascii=False, indent=1), encoding="utf-8")
     return cases, races, base
 

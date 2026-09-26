@@ -1,0 +1,31 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>База знаний бэктестов</title><style>
+:root { --bg:#ffffff; --fg:#1d1d1f; --muted:#6e6e73; --line:#d9d9de; --head:#f4f4f6; --link:#0a66c2; --quote:#f7f3e8; }
+@media (prefers-color-scheme: dark) { :root { --bg:#1c1c1e; --fg:#f2f2f7; --muted:#a1a1a6; --line:#3a3a3c; --head:#2c2c2e; --link:#5ea8ff; --quote:#2e2a20; } }
+body { background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin:0; }
+main { max-width:1400px; margin:0 auto; padding:24px 16px 64px; }
+h1 { font-size:26px; } h2 { font-size:21px; margin-top:36px; border-bottom:1px solid var(--line); padding-bottom:4px; } h3 { font-size:17px; margin-top:28px; }
+a { color:var(--link); }
+code { background:var(--head); padding:1px 5px; border-radius:4px; font-size:13px; }
+blockquote { background:var(--quote); margin:12px 0; padding:8px 14px; border-radius:6px; }
+.tbl { overflow-x:auto; }
+table { border-collapse:collapse; margin:10px 0; font-size:14px; }
+th, td { border:1px solid var(--line); padding:5px 9px; text-align:left; vertical-align:top; }
+th { background:var(--head); }
+img { max-width:100%; border:1px solid var(--line); border-radius:6px; }
+em { color:var(--muted); }
+</style></head><body><main><h1 id="база-знаний-бэктестов">База знаний бэктестов</h1>
+<p>Сюда складываются выводы проверок торговых идей на истории — по файлу на актив. Опровергнутые идеи не удаляются: так их не придётся проверять повторно.</p>
+<h2 id="файлы">Файлы</h2>
+<div class="tbl"><table><thead><tr><th>Актив</th><th>Файл</th><th>Данные</th></tr></thead><tbody>
+<tr><td>US30 (Dow Jones)</td><td><a href="US30.html">US30.md</a></td><td>TradingView <code>PEPPERSTONE:US30</code></td></tr>
+</tbody></table></div>
+<h2 id="статусы-идей">Статусы идей</h2>
+<ul><li>✅ <strong>подтверждено</strong> — преимущество над базой устойчиво на достаточной выборке (от ~30 решённых случаев) и на разных периодах;</li><li>❌ <strong>опровергнуто</strong> — преимущества над базой нет;</li><li>⚠️ <strong>мало данных</strong> — меньше ~30 случаев, вывод предварительный;</li><li>🔄 <strong>в работе</strong> — правила уточняются или прогон не закончен.</li></ul>
+<p>В раздел «Рабочие правила» вверху файла актива попадают только ✅.</p>
+<h2 id="как-идёт-проверка">Как идёт проверка</h2>
+<ol><li>Идея своими словами → формализация в точные правила → подтверждение пользователем.</li><li>Расчёт — Pine-индикатор в <a href="../pine/"><code>../pine/</code></a> на графике TradingView (layout <code>us30_backtest</code>). Каждый случай индикатор пишет строкой в Pine Logs; логи собираются в <code>reports/&lt;период&gt;_&lt;идея&gt;/pine-logs.json</code>.</li><li>Отчёт — <code>python3 tools/report.py reports/&lt;папка&gt;</code>: статистика, базовая частота, срезы, таблица случаев, картинка каждого дня (скриншот графика с индикатором).</li><li>Вывод — в файл актива: статус, цифры, ссылка на отчёт, история прогонов.</li></ol>
+<h2 id="две-базы-для-сравнения">Две базы для сравнения</h2>
+<p>Одного «% отработок» мало: важно, насколько он выше того, что получилось бы без сигнала.</p>
+<ul><li><strong>База по сессиям</strong> — тот же критерий отработки, посчитанный от закрытия каждой свечи тех же сессий, без условия.</li><li><strong>Случайное блуждание</strong> — для критерия «какая из двух целей первой»: шанс дойти до цели A раньше цели B при случайном движении равен <code>расстояние до B / (расстояние до A + расстояние до B)</code>. Эта база строже: она учитывает, что после закрепа ближайшая цель по направлению обычно ближе цели против.</li></ul>
+<h2 id="ограничение-данных">Ограничение данных</h2>
+<p>Тариф TradingView Essential хранит на графике ≈ 10 000 часовых свечей (на сентябрь 2026 — примерно с 2 января 2025), и это окно каждый день сдвигается вперёд. Старшие таймфреймы (D/W/M) доступны на всю глубину. Прогоны по H1 нужно делать, пока нужный период ещё в окне.</p></main></body></html>
