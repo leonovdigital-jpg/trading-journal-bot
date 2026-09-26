@@ -15,7 +15,8 @@ from zoneinfo import ZoneInfo
 import md2html
 
 CASE_FIELDS = ["t", "sess", "dir", "close", "lvl", "lvlT", "origin", "conflict", "body", "first",
-               "tA", "tfA", "kA", "tB", "tfB", "kB", "res", "resT", "mfe", "mae", "lonMove", "dayMove", "revT"]
+               "tA", "tfA", "kA", "tB", "tfB", "kB", "res", "resT", "mfe", "mae", "lonMove", "dayMove", "revT",
+               "lmfe", "lmae"]
 SESS = {"F": "Франкфурт", "L": "Лондон", "U": "США"}
 KIND = {"1": "фрактал", "2": "имбаланс"}
 RES_ICON = {"WIN": "✅", "LOSS": "❌", "BOTH": "❓", "NONE": "⏳"}
@@ -41,17 +42,19 @@ def load(folder: Path):
     cases, races = [], []
     for m in msgs:
         p = m.split(";")
-        if p[0] == "CASE":
+        # в панели логов могут остаться строки прошлых версий индикатора — берём только текущий формат
+        if p[0] == "CASE" and len(p) == len(CASE_FIELDS) + 1:
             c = dict(zip(CASE_FIELDS, p[1:]))
-            for k in ("close", "lvl", "tA", "tB", "mfe", "mae", "lonMove", "dayMove"):
+            for k in ("close", "lvl", "tA", "tB", "mfe", "mae", "lonMove", "dayMove", "lmfe", "lmae"):
                 c[k] = num(c[k])
             c["first"] = c["first"] == "1"
             c["body"] = c["body"] == "1"
             c["conflict"] = c["conflict"] == "1"
             c["day"] = trading_day(c["t"])
             cases.append(c)
-        elif p[0] == "RACE":
-            races.append({"t": p[1], "day": trading_day(p[1]), "sess": p[2], "up": num(p[3]), "dn": num(p[4]), "res": p[5]})
+        elif p[0] == "RACE" and len(p) == 9:
+            races.append({"t": p[1], "day": trading_day(p[1]), "sess": p[2], "up": num(p[3]), "dn": num(p[4]), "res": p[5],
+                          "c": num(p[6]), "lonEnd": num(p[7]), "dayEnd": num(p[8])})
     cases.sort(key=lambda c: c["t"])
     races.sort(key=lambda r: r["t"])
     return cases, races
@@ -130,7 +133,9 @@ def build(folder: Path):
     L.append("## Как читать\n")
     L.append("- **✅** — от закрытия свечи-сигнала цена первой дошла до ближайшей нетронутой зоны H4/D/W/M **по направлению** закрепа; "
              "**❌** — первой до ближайшей зоны **против**; **❓** — обе задеты одной часовой свечой (по H1 порядок не виден); "
-             "**⏳** — до конца торгового дня ни одной.")
+             "**⏳** — за горизонт ни одной.")
+    L.append("- **Горизонт:** сигналы Франкфурта и Лондона — **до конца Лондона** (разворот в США их не отменяет), "
+             "сигнал США — до конца торгового дня.")
     L.append("- **% ✅** считается только из решённых (✅ + ❌).")
     L.append("- **База** — сколько процентов дала бы та же «гонка двух зон» без всякого сигнала: от закрытия каждой свечи тех же сессий, "
              "с тем же соотношением лонгов и шортов.")
@@ -145,6 +150,32 @@ def build(folder: Path):
         L.append(row(SESS[s], [c for c in cases if c["sess"] == s], base))
     L.append(row("**Первый сигнал дня**", [c for c in cases if c["first"]], base))
     L.append(row("**Все сигналы**", cases, base))
+    L.append("")
+
+    # Прямая мерка исходной идеи: Лондон закрылся в сторону закрепа?
+    L.append("### Лондон закрылся в сторону закрепа?\n")
+    L.append("Закрытие последней свечи Лондона против закрытия свечи-сигнала. База — то же от закрытия каждой свечи сессии, без сигнала.\n")
+    L.append("| Сигнал | Случаев | По направлению | Против | % | База | Разница | Средний ход, п. |")
+    L.append("|---|---|---|---|---|---|---|---|")
+    for s_ in ("F", "L"):
+        cs = [c for c in cases if c["sess"] == s_ and c["lonMove"] is not None]
+        if not cs:
+            continue
+        pos = sum(1 for c in cs if c["lonMove"] > 0)
+        neg = sum(1 for c in cs if c["lonMove"] < 0)
+        rs = [r for r in races if r["sess"] == s_ and r["lonEnd"] is not None and r["c"] is not None and r["lonEnd"] != r["c"]]
+        pu = sum(1 for r in rs if r["lonEnd"] > r["c"]) / len(rs) if rs else None
+        exp = avg([(pu if c["dir"] == "L" else 1 - pu) for c in cs]) if pu is not None else None
+        got = pos / (pos + neg) if pos + neg else None
+        L.append(f"| {SESS[s_]} | {len(cs)} | {pos} | {neg} | {pct(pos, pos + neg)} | "
+                 f"{f'{100 * exp:.0f}%' if exp is not None else '—'} | "
+                 f"{f'{100 * (got - exp):+.0f} п.п.' if got is not None and exp is not None else '—'} | {f0(avg([c['lonMove'] for c in cs]))} |")
+    L.append("")
+    L.append("**Закреп удержан к концу Лондона** — последняя свеча Лондона закрылась за тем же уровнем фрактала:\n")
+    for s_ in ("F", "L"):
+        cs = [c for c in cases if c["sess"] == s_ and c["lonMove"] is not None]
+        held = [c for c in cs if (c["close"] + c["lonMove"] * (1 if c["dir"] == "L" else -1) - c["lvl"]) * (1 if c["dir"] == "L" else -1) > 0]
+        L.append(f"- {SESS[s_]}: {len(held)} из {len(cs)}")
     L.append("")
 
     L.append("### Срезы\n")
@@ -182,8 +213,8 @@ def build(folder: Path):
              "но стоит помнить при чтении % ✅.*\n")
 
     L.append("### Ход цены после сигнала, пункты\n")
-    L.append("| Сигнал | Макс. ход по направлению | Макс. ход против | К концу Лондона | К концу дня | Конец дня в плюс | Обратный закреп |")
-    L.append("|---|---|---|---|---|---|---|")
+    L.append("| Сигнал | Макс. ход по направлению в Лондоне | Макс. ход против в Лондоне | Макс. ход по направлению за день | Макс. ход против за день | К концу Лондона | К концу дня | Конец дня в плюс | Обратный закреп |")
+    L.append("|---|---|---|---|---|---|---|---|---|")
     for s in ("F", "L", "U"):
         cs = [c for c in cases if c["sess"] == s]
         if not cs:
@@ -191,7 +222,8 @@ def build(folder: Path):
         pos = sum(1 for c in cs if (c["dayMove"] or 0) > 0)
         rev = sum(1 for c in cs if c["revT"])
         lon = avg([c["lonMove"] for c in cs]) if s != "U" else None
-        L.append(f"| {SESS[s]} | {f0(avg([c['mfe'] for c in cs]))} | {f0(avg([c['mae'] for c in cs]))} | "
+        lm = (f0(avg([c['lmfe'] for c in cs])), f0(avg([c['lmae'] for c in cs]))) if s != "U" else ("—", "—")
+        L.append(f"| {SESS[s]} | {lm[0]} | {lm[1]} | {f0(avg([c['mfe'] for c in cs]))} | {f0(avg([c['mae'] for c in cs]))} | "
                  f"{f0(lon)} | {f0(avg([c['dayMove'] for c in cs]))} | {pos} из {len(cs)} | {rev} из {len(cs)} |")
     L.append("\n*Средние значения. «Обратный закреп» — часовое тело закрылось обратно за уровень фрактала до конца дня.*\n")
 
@@ -217,17 +249,19 @@ def build(folder: Path):
     L.append("Картинка дня — скриншот графика TradingView с индикатором: серым Азия, фиолетовым Франкфурт, зелёным Лондон, "
              "голубым США; оранжевая линия — уровень фрактала, пунктир — цели (зелёный по направлению, красный против) "
              "с подписью таймфрейма. Сверить можно на своём графике по дате и времени.\n")
-    L.append("| Дата, время | Сессия | Направление | Закрытие | Уровень (откуда) | Цель по направлению | Цель против | Итог | Ход +/− | Картинка |")
-    L.append("|---|---|---|---|---|---|---|---|---|---|")
+    L.append("| Дата, время | Сессия | Направление | Закрытие | Уровень (откуда) | Цель по направлению | Цель против | Итог | К концу Лондона | Ход +/− | Картинка |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for c in cases:
         ta = f"{c['tA']:.1f} {c['tfA']} {KIND.get(c['kA'], '')}" if c["tA"] is not None else "нет"
         tb = f"{c['tB']:.1f} {c['tfB']} {KIND.get(c['kB'], '')}" if c["tB"] is not None else "нет"
         res = RES_ICON[c["res"]] + (f" {c['resT'][11:]}" if c["resT"] else "")
         flags = (" · первый" if c["first"] else "") + (" · конфликт" if c["conflict"] else "")
+        lon_move = "—" if c["lonMove"] is None else f"{c['lonMove']:+.0f}"
         day = c["day"]
         img = f"[{day}](#{day})" if (folder / "days" / f"{day}.png").exists() else "—"
         L.append(f"| {c['t']} | {SESS[c['sess']]}{flags} | {'лонг' if c['dir'] == 'L' else 'шорт'} | {c['close']:.1f} | "
                  f"{c['lvl']:.1f} ({c['origin']}, {c['lvlT'][11:]}) | {ta} | {tb} | {res} | "
+                 f"{lon_move} | "
                  f"{f0(c['mfe'])} / {f0(c['mae'])} | {img} |")
     L.append("")
 

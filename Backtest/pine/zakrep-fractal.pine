@@ -1,6 +1,7 @@
 //@version=6
 // Идея 1: закреп часовой свечи за последним фракталом → куда пойдёт цена.
 // Каскад Франкфурт → Лондон → США, цели — нетронутые фракталы и имбалансы H4/D/W/M.
+// Горизонт: сигналы Франкфурта и Лондона — до конца Лондона, сигнал США — до конца торгового дня.
 // Правила подтверждены пользователем 26.09.2026, см. knowledge-base/US30.md.
 indicator("BT: закреп за фракталом", shorttitle = "BT закреп", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
@@ -159,6 +160,9 @@ type Case
     float lonEnd
     line lnA
     line lnB
+    int hEndBar
+    float lmfe
+    float lmae
 
 type Race
     int t
@@ -168,6 +172,8 @@ type Race
     float dn
     int kDn
     string res
+    float c
+    float lonEnd
 
 var cases = array.new<Case>()
 var races = array.new<Race>()
@@ -211,25 +217,26 @@ finishCase(Case c, float dayEnd, int lastBar) =>
             stB.set(3, stB.get(3) + 1)
         else
             stO.set(3, stO.get(3) + 1)
+    endBar = c.sess == "U" or na(c.hEndBar) ? lastBar : c.hEndBar
     if not na(c.lnA)
-        c.lnA.set_x2(lastBar)
-        label.new(lastBar, c.tA, tfName(c.tfA) + " " + kindName(c.kA), style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.new(#1b8a3a, 0), size = size.tiny)
+        c.lnA.set_x2(endBar)
+        label.new(endBar, c.tA, tfName(c.tfA) + " " + kindName(c.kA), style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.new(#1b8a3a, 0), size = size.tiny)
     if not na(c.lnB)
-        c.lnB.set_x2(lastBar)
-        label.new(lastBar, c.tB, tfName(c.tfB) + " " + kindName(c.kB), style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.new(#c0392b, 0), size = size.tiny)
+        c.lnB.set_x2(endBar)
+        label.new(endBar, c.tB, tfName(c.tfB) + " " + kindName(c.kB), style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.new(#c0392b, 0), size = size.tiny)
     if doLog
         lonMove = na(c.lonEnd) ? na : (c.lonEnd - c.c) * c.dir
         dayMove = (dayEnd - c.c) * c.dir
-        log.info("CASE;" + fmtT(c.t) + ";" + c.sess + ";" + (c.dir == 1 ? "L" : "S") + ";" + f1(c.c) + ";" + f1(c.lvl) + ";" + fmtT(c.lvlT) + ";" + c.origin + ";" + (c.conflict ? "1" : "0") + ";" + (c.body ? "1" : "0") + ";" + (c.first ? "1" : "0") + ";" + f1(c.tA) + ";" + (na(c.tA) ? "" : tfName(c.tfA)) + ";" + (na(c.tA) ? "" : str.tostring(c.kA)) + ";" + f1(c.tB) + ";" + (na(c.tB) ? "" : tfName(c.tfB)) + ";" + (na(c.tB) ? "" : str.tostring(c.kB)) + ";" + c.res + ";" + fmtT(c.resT) + ";" + f1(c.mfe) + ";" + f1(c.mae) + ";" + f1(lonMove) + ";" + f1(dayMove) + ";" + fmtT(c.revT))
+        log.info("CASE;" + fmtT(c.t) + ";" + c.sess + ";" + (c.dir == 1 ? "L" : "S") + ";" + f1(c.c) + ";" + f1(c.lvl) + ";" + fmtT(c.lvlT) + ";" + c.origin + ";" + (c.conflict ? "1" : "0") + ";" + (c.body ? "1" : "0") + ";" + (c.first ? "1" : "0") + ";" + f1(c.tA) + ";" + (na(c.tA) ? "" : tfName(c.tfA)) + ";" + (na(c.tA) ? "" : str.tostring(c.kA)) + ";" + f1(c.tB) + ";" + (na(c.tB) ? "" : tfName(c.tfB)) + ";" + (na(c.tB) ? "" : str.tostring(c.kB)) + ";" + c.res + ";" + fmtT(c.resT) + ";" + f1(c.mfe) + ";" + f1(c.mae) + ";" + f1(lonMove) + ";" + f1(dayMove) + ";" + fmtT(c.revT) + ";" + f1(c.lmfe) + ";" + f1(c.lmae))
 
-finishRace(Race r) =>
+finishRace(Race r, float dayEnd) =>
     i = sessIdx(r.sess)
     if r.res == "UP"
         bsUp.set(i, bsUp.get(i) + 1)
     else if r.res == "DN"
         bsDn.set(i, bsDn.get(i) + 1)
     if doLog and showBase
-        log.info("RACE;" + fmtT(r.t) + ";" + r.sess + ";" + f1(r.up) + ";" + f1(r.dn) + ";" + r.res)
+        log.info("RACE;" + fmtT(r.t) + ";" + r.sess + ";" + f1(r.up) + ";" + f1(r.dn) + ";" + r.res + ";" + f1(r.c) + ";" + f1(r.lonEnd) + ";" + f1(dayEnd))
 
 // 0. Новый торговый день: закрываем все случаи прошлого дня
 var bool doneF = false
@@ -240,7 +247,7 @@ if newDay
     for c in cases
         finishCase(c, close[1], bar_index - 1)
     for r in races
-        finishRace(r)
+        finishRace(r, close[1])
     cases.clear()
     races.clear()
     doneF := false
@@ -253,11 +260,17 @@ if bar_index > 0 and isLondon(time[1]) and not isLondon(time)
     for c in cases
         if c.sess != "U" and na(c.lonEnd)
             c.lonEnd := close[1]
+            c.hEndBar := bar_index - 1
+    for r in races
+        if r.sess != "U" and na(r.lonEnd)
+            r.lonEnd := close[1]
 
-// 1. Движение после сигнала: какая цель первой, ход, обратный закреп
+// 1. Движение после сигнала: какая цель первой, ход, обратный закреп.
+// Цели Франкфурта и Лондона проверяются только до конца Лондона, цели США — до конца дня.
+inLon = isLondon(time)
 for c in cases
     if c.bar < bar_index
-        if c.res == "NONE"
+        if c.res == "NONE" and (c.sess == "U" or inLon)
             hA = c.dir == 1 ? hitAbove(c.tA, c.kA) : hitBelow(c.tA, c.kA)
             hBx = c.dir == 1 ? hitBelow(c.tB, c.kB) : hitAbove(c.tB, c.kB)
             if hA or hBx
@@ -267,10 +280,13 @@ for c in cases
                 label.new(bar_index, c.dir == 1 ? (hA ? high : low) : (hA ? low : high), txt, style = label.style_none, size = size.small)
         c.mfe := math.max(c.mfe, c.dir == 1 ? high - c.c : c.c - low)
         c.mae := math.max(c.mae, c.dir == 1 ? c.c - low : high - c.c)
+        if inLon
+            c.lmfe := math.max(c.lmfe, c.dir == 1 ? high - c.c : c.c - low)
+            c.lmae := math.max(c.lmae, c.dir == 1 ? c.c - low : high - c.c)
         if na(c.revT) and ((c.dir == 1 and close < c.lvl) or (c.dir == -1 and close > c.lvl))
             c.revT := time
 for r in races
-    if r.res == "NONE"
+    if r.res == "NONE" and r.t < time and (r.sess == "U" or inLon)
         u = hitAbove(r.up, r.kUp)
         d = hitBelow(r.dn, r.kDn)
         if u or d
@@ -328,7 +344,7 @@ if inWin and sessOpen
         zb = dir == 1 ? nearestBelow() : nearestAbove()
         lvl = dir == 1 ? upLvl : dnLvl
         lb = dir == 1 ? upBar : dnBar
-        c = Case.new(dayN, bar_index, time, s, dir, close, lvl, lb, dir == 1 ? upT : dnT, originOf(dir == 1 ? upT : dnT, dir == 1 ? upDay : dnDay), conflict, dir == 1 ? math.min(open, close) > lvl : math.max(open, close) < lvl, not hadSig, na(za) ? na : za.lvl, na(za) ? na : za.tf, na(za) ? na : za.kind, na(zb) ? na : zb.lvl, na(zb) ? na : zb.tf, na(zb) ? na : zb.kind, "NONE", na, 0.0, 0.0, na, na, na, na)
+        c = Case.new(dayN, bar_index, time, s, dir, close, lvl, lb, dir == 1 ? upT : dnT, originOf(dir == 1 ? upT : dnT, dir == 1 ? upDay : dnDay), conflict, dir == 1 ? math.min(open, close) > lvl : math.max(open, close) < lvl, not hadSig, na(za) ? na : za.lvl, na(za) ? na : za.tf, na(za) ? na : za.kind, na(zb) ? na : zb.lvl, na(zb) ? na : zb.tf, na(zb) ? na : zb.kind, "NONE", na, 0.0, 0.0, na, na, na, na, na, 0.0, 0.0)
         line.new(lb, lvl, bar_index, lvl, color = color.new(#f39c12, 0), width = 2)
         if not na(c.tA)
             c.lnA := line.new(bar_index, c.tA, bar_index, c.tA, color = color.new(#1b8a3a, 0), style = line.style_dashed, width = 2)
@@ -349,7 +365,7 @@ if inWin and sessOpen
 if inWin and (s == "F" or s == "L" or s == "U")
     zu = nearestAbove()
     zd = nearestBelow()
-    races.push(Race.new(time, s, na(zu) ? na : zu.lvl, na(zu) ? na : zu.kind, na(zd) ? na : zd.lvl, na(zd) ? na : zd.kind, "NONE"))
+    races.push(Race.new(time, s, na(zu) ? na : zu.lvl, na(zu) ? na : zu.kind, na(zd) ? na : zd.lvl, na(zd) ? na : zd.kind, "NONE", close, na))
 
 // 4. Новые фракталы H1 (1 свеча слева и справа) — подтверждаются закрытием правой соседки
 upF = bar_index >= 2 and high[1] > high[2] and high[1] > high
