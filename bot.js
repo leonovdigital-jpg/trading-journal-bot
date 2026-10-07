@@ -121,8 +121,25 @@ function newRequestId() {
 const DEFAULT_PROPS = ['Instant', '100k challenge', 'FundingPips'];
 let propsCache = null;
 // Размеры аккаунтов (лист Props) — база для пересчёта риска $ → %.
-// Не кэшируем: после пройденного челленджа размер меняется строкой в Props.
+// После пройденного челленджа размер меняется строкой в Props, поэтому держать их
+// вечно нельзя — обновляем при каждом обращении, но В ФОНЕ.
 let propSizes = {};
+let propInfoInflight = null;
+
+// Запустить обновление, не дожидаясь. Повторный вызов пока идёт первый —
+// это тот же запрос, а не второй: Apps Script и так медленный.
+function startPropInfo() {
+  if (propInfoInflight) return propInfoInflight;
+  propInfoInflight = sheetsPost({ action: 'ping' })
+    .then(data => {
+      const props = data && data.data && data.data.props;
+      if (Array.isArray(props) && props.length > 0) propsCache = props;
+      if (data && data.data && data.data.sizes) propSizes = data.data.sizes;
+    })
+    .catch(error => console.error('Props fetch error:', error.message))
+    .finally(() => { propInfoInflight = null; });
+  return propInfoInflight;
+}
 
 async function getProps() {
   if (propsCache) return propsCache;
@@ -130,15 +147,18 @@ async function getProps() {
   return propsCache || DEFAULT_PROPS;
 }
 
+// Apps Script отвечает то за 5 секунд, то за полторы минуты — и всё это время
+// раньше висел диалог. 07.10 пользователь нажал Short, минуту не получал ответа,
+// а потом Telegram объявлял нажатие просроченным: один медленный запрос внутри
+// обработчика кнопки останавливает бота целиком, он разбирает апдейты по очереди.
+// Поэтому: знаем ответ — отдаём мгновенно и обновляем в фоне; не знаем — ждём,
+// но только первый раз (список пропов и размеры прогреваются при старте бота).
 async function fetchPropInfo() {
-  try {
-    const data = await sheetsPost({ action: 'ping' });
-    const props = data && data.data && data.data.props;
-    if (Array.isArray(props) && props.length > 0) propsCache = props;
-    if (data && data.data && data.data.sizes) propSizes = data.data.sizes;
-  } catch (error) {
-    console.error('Props fetch error:', error.message);
+  if (propsCache && Object.keys(propSizes).length) {
+    startPropInfo();
+    return { props: propsCache, sizes: propSizes };
   }
+  await startPropInfo();
   return { props: propsCache || DEFAULT_PROPS, sizes: propSizes };
 }
 
@@ -988,6 +1008,10 @@ bot.on('text', async (ctx) => {
       .includes(state.step);
 
     if (links.length > 0 && !awaitingText) {
+      // Пропы и размеры счетов понадобятся через пару вопросов — греем их сейчас,
+      // параллельно съёмке, чтобы к моменту кнопок ответ уже лежал в кэше.
+      startPropInfo();
+
       // Одна ссылка + доступный воркер = авторежим: остальные шесть таймфреймов
       // бот снимет сам с графика пользователя. Несколько ссылок — как раньше, вручную.
       if (links.length === 1 && WORKER_URL) {
@@ -1090,6 +1114,19 @@ bot.on('text', async (ctx) => {
 /*** Кнопки ***/
 
 bot.on('callback_query', async (ctx) => {
+  // Telegram объявляет нажатие просроченным секунд через 15, а ветка ниже может
+  // уйти в Apps Script, который думает и минуту — тогда пользователь видит крутилку
+  // и в конце «query is too old» (07.10). Поэтому гасим крутилку сами, не дожидаясь
+  // конца работы. Полторы секунды форы — чтобы быстрые ветки успели показать свою
+  // подсказку («Сначала выбери сессию»): ответить на нажатие можно только один раз.
+  let answered = false;
+  const ack = async (text, extra) => {
+    if (answered) return;
+    answered = true;
+    await ctx.answerCbQuery(text, extra).catch(() => {});
+  };
+  const ackTimer = setTimeout(() => { ack(); }, 1500);
+
   try {
     const chatId = ctx.chat.id;
     const data = ctx.callbackQuery.data;
@@ -1115,7 +1152,7 @@ bot.on('callback_query', async (ctx) => {
       // Без этой проверки кнопка Long/Short, нажатая на шаге выбора сессии,
       // протаскивала диалог дальше, и сделка записывалась с пустой сессией.
       if (state.step !== 'waiting_position') {
-        await ctx.answerCbQuery('Сначала выбери сессию');
+        await ack('Сначала выбери сессию');
         return;
       }
       state.position = data.replace('pos_', '');
@@ -1134,7 +1171,7 @@ bot.on('callback_query', async (ctx) => {
 
     } else if (data.startsWith('accsel_')) {
       if (state.step !== 'waiting_accounts') {
-        await ctx.answerCbQuery('Этот шаг уже пройден');
+        await ack('Этот шаг уже пройден');
         return;
       }
       const name = state.props[parseInt(data.split('_')[1], 10)];
@@ -1149,11 +1186,11 @@ bot.on('callback_query', async (ctx) => {
 
     } else if (data === 'accdone') {
       if (state.step !== 'waiting_accounts') {
-        await ctx.answerCbQuery('Этот шаг уже пройден');
+        await ack('Этот шаг уже пройден');
         return;
       }
       if (state.accSelected.length === 0) {
-        await ctx.answerCbQuery('Выбери хотя бы один аккаунт', { show_alert: true });
+        await ack('Выбери хотя бы один аккаунт', { show_alert: true });
         return;
       }
       state.riskIdx = 0;
@@ -1161,7 +1198,7 @@ bot.on('callback_query', async (ctx) => {
 
     } else if (data.startsWith('prisk_')) {
       if (state.step !== 'waiting_risk') {
-        await ctx.answerCbQuery('Этот шаг уже пройден');
+        await ack('Этот шаг уже пройден');
         return;
       }
       const value = data.replace('prisk_', '');
@@ -1181,7 +1218,7 @@ bot.on('callback_query', async (ctx) => {
 
     } else if (data.startsWith('grade_')) {
       if (state.step !== 'waiting_grade') {
-        await ctx.answerCbQuery('Этот шаг уже пройден');
+        await ack('Этот шаг уже пройден');
         return;
       }
       state.grade = data.replace('grade_', '');
@@ -1192,7 +1229,7 @@ bot.on('callback_query', async (ctx) => {
 
     } else if (data === 'errors_skip') {
       if (state.step !== 'closing_errors') {
-        await ctx.answerCbQuery('Этот шаг уже пройден');
+        await ack('Этот шаг уже пройден');
         return;
       }
       state.closeErrors = '';
@@ -1204,7 +1241,7 @@ bot.on('callback_query', async (ctx) => {
 
       if (!trade) {
         await ctx.reply('Список устарел. Набери /closetrade заново.');
-        await ctx.answerCbQuery();
+        await ack();
         return;
       }
 
@@ -1232,7 +1269,7 @@ bot.on('callback_query', async (ctx) => {
 
         await ctx.reply(`${head}\n\n⏳ Скрины закрытия (5м и 1ч) снимаю сам.`);
         await askUsdForNext(ctx, state);
-        await ctx.answerCbQuery().catch(() => {});
+        await ack().catch(() => {});
         return;
       }
 
@@ -1242,7 +1279,7 @@ bot.on('callback_query', async (ctx) => {
 
     } else if (data === 'usd_skip') {
       if (state.step !== 'closing_usd') {
-        await ctx.answerCbQuery('Этот шаг уже пройден');
+        await ack('Этот шаг уже пройден');
         return;
       }
       state.closeIdx++;
@@ -1253,11 +1290,13 @@ bot.on('callback_query', async (ctx) => {
       await ctx.reply('❌ Отменено');
     }
 
-    await ctx.answerCbQuery().catch(() => {});
+    await ack();
   } catch (err) {
     console.error('❌ Error in callback handler:', err.message, err.stack);
     await ctx.reply('❌ Ошибка: ' + err.message).catch(() => {});
-    await ctx.answerCbQuery().catch(() => {});
+    await ack();
+  } finally {
+    clearTimeout(ackTimer);
   }
 });
 
@@ -1278,7 +1317,7 @@ app.post('/bot', (req, res) => {
 module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
-  checkWorker, notifyAdmin, runCanary, maybeRunCanary
+  checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo
 };
 
 // На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит
@@ -1290,6 +1329,7 @@ if (require.main === module) app.listen(PORT, async () => {
 
   restoreStates();
   startWatchdog();
+  startPropInfo();        // прогреваем список пропов и размеры счетов до первой кнопки
 
   try {
     await bot.telegram.deleteWebhook();
