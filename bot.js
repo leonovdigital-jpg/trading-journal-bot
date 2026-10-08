@@ -904,8 +904,15 @@ bot.command('stats', async (ctx) => {
 // фиксация влияет только на «текущий баланс» = фиксация + сделки после неё.
 bot.command('balance', async (ctx) => {
   try {
-    const args = ctx.message.text.replace(/^\/balance(@\w+)?\s*/i, '').trim();
+    let args = ctx.message.text.replace(/^\/balance(@\w+)?\s*/i, '').trim();
     const props = await getProps();
+
+    // «сброс» и «выплата» — баланс изменился не из-за торговли (прошёл фазу, забрал
+    // деньги). Такая разница не должна попадать в месячный результат, иначе сброс
+    // со 107 550 до 100 000 читался бы как минус 7 550 за месяц.
+    const neutralWord = args.match(/^(сброс|сбросил|выплата|выплату|reset|payout)\s+/i);
+    const neutral = !!neutralWord;
+    if (neutral) args = args.slice(neutralWord[0].length).trim();
 
     if (!args) {
       const stats = await getStats();
@@ -914,7 +921,13 @@ bot.command('balance', async (ctx) => {
         : `• ${p.name}: ${Number(p.currentBalance).toLocaleString('ru-RU')}$` +
           (p.snapshotAt ? ` (зафиксировано ${Number(p.snapshotBalance).toLocaleString('ru-RU')}$ ${p.snapshotAt}, после: ${fmtMoney(p.pnlSince)})`
                         : ` (аккаунт ${Number(p.accountSize).toLocaleString('ru-RU')}$ + сделки)`));
-      await ctx.reply(`Балансы сейчас:\n${lines.join('\n')}\n\nЕсли на счёте другая сумма — зафиксируй факт:\n/balance <проп> <сумма>\nНапример: /balance instant 48789\nПроценты по сделкам от этого не меняются.`);
+      await ctx.reply(
+        `Балансы сейчас:\n${lines.join('\n')}\n\n` +
+        'Если на счёте другая сумма — зафиксируй факт:\n' +
+        '/balance <проп> <сумма>\nНапример: /balance instant 48789\n\n' +
+        'Прошёл фазу или забрал выплату — добавь слово «сброс»:\n' +
+        '/balance сброс instant 50000\n' +
+        'Тогда эта разница не попадёт в результат месяца.');
       return;
     }
 
@@ -937,14 +950,22 @@ bot.command('balance', async (ctx) => {
       return;
     }
 
-    const reply = await sheetsPost({ action: 'setBalance', requestId: newRequestId(), name: matches[0], balance: amount });
+    const reply = await sheetsPost({
+      action: 'setBalance', requestId: newRequestId(),
+      name: matches[0], balance: amount, neutral: neutral
+    });
     if (!reply || reply.success !== true) {
       await ctx.reply('❌ Не записалось: ' + (reply && reply.message));
       return;
     }
 
     const d = reply.data;
-    await ctx.reply(`✅ ${d.name}: ${Number(d.balance).toLocaleString('ru-RU')}$ зафиксировано ${d.at}\n\nДальше баланс движется от этой суммы по закрытым сделкам. Проверить: /stats`);
+    const note = neutral && d.adjust != null
+      ? `\n\n${fmtMoney(d.adjust)} не пойдут в статистику — это не результат торговли.`
+      : '';
+    await ctx.reply(
+      `✅ ${d.name}: ${Number(d.balance).toLocaleString('ru-RU')}$ зафиксировано ${d.at}${note}` +
+      '\n\nДальше баланс движется от этой суммы по закрытым сделкам. Проверить: /stats');
   } catch (error) {
     console.error('Balance error:', error.message);
     await ctx.reply('❌ Ошибка: ' + error.message);

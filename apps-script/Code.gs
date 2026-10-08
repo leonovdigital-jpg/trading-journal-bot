@@ -316,6 +316,13 @@ function setScreenshots(sheet, data) {
 }
 
 function dumpSheet(sheet, data) {
+  // data.sheet — посмотреть другой лист («Статистика», «Балансы», «Props»),
+  // иначе читаем журнал сделок.
+  if (data.sheet) {
+    var other = sheet.getParent().getSheetByName(String(data.sheet));
+    if (!other) return createResponse(false, 'нет листа ' + data.sheet);
+    sheet = other;
+  }
   var values = sheet.getDataRange().getValues();
   var rows = Number(data.rows || 3);
   // from — с какой строки таблицы начать (1-based). По умолчанию с шапки.
