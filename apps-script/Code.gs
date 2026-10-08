@@ -425,14 +425,37 @@ function ensureBalancesSheet(ss) {
   var sheet = ss.getSheetByName(BALANCES_SHEET);
   if (!sheet) {
     sheet = ss.insertSheet(BALANCES_SHEET);
-    sheet.getRange('A1:C1').setValues([['Проп', 'Баланс', 'Зафиксирован']])
-      .setFontWeight('bold').setBackground('#37474F').setFontColor('white');
     sheet.setColumnWidth(1, 160);
     sheet.setColumnWidth(3, 160);
   }
+  // D — изменение баланса, которое НЕ является результатом торговли: сброс счёта
+  // после пройденной фазы, выплата, доливка. Такие суммы вычитаются из P&L,
+  // иначе сброс 107 550 → 100 000 выглядел бы как минус 7 550 за месяц.
+  sheet.getRange('A1:D1').setValues([['Проп', 'Баланс', 'Зафиксирован', 'Корректировка $']])
+    .setFontWeight('bold').setBackground('#37474F').setFontColor('white');
+  sheet.setColumnWidth(4, 150);
   sheet.getRange(2, 2, BALANCES_MAX_ROW, 1).setNumberFormat('#,##0.00');
   sheet.getRange(2, 3, BALANCES_MAX_ROW, 1).setNumberFormat('dd.MM.yyyy HH:mm');
+  sheet.getRange(2, 4, BALANCES_MAX_ROW, 1).setNumberFormat('+#,##0.00" $";-#,##0.00" $";""');
   return sheet;
+}
+
+// Сумма не торговых изменений баланса в промежутке (after, until].
+// Границы такие же, как у balanceAt: фиксация ровно в момент `after` уже учтена
+// в балансе на этот момент, поэтому строго больше.
+function adjustSumBetween(ss, propName, after, until) {
+  var sheet = ss.getSheetByName(BALANCES_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getValues();
+  var sum = 0;
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0]).trim().toLowerCase() !== String(propName).trim().toLowerCase()) continue;
+    var at = values[i][2];
+    if (!(at instanceof Date) || at <= after || at > until) continue;
+    sum += toNumber(values[i][3]) || 0;
+  }
+  return sum;
 }
 
 // Последняя фиксация баланса пропа не позже момента `when`
@@ -452,7 +475,13 @@ function balanceSnapshotFor(ss, propName, when) {
   return best;
 }
 
-// /balance: фиксирует фактический баланс на текущий момент (или data.at — ISO-строка)
+// /balance: фиксирует фактический баланс на текущий момент (или data.at — ISO-строка).
+//
+// data.neutral === true — баланс изменился НЕ из-за торговли (сброс после фазы,
+// выплата, доливка). Тогда разница между новым балансом и тем, что было секунду
+// назад, пишется в колонку «Корректировка $» и вычитается из P&L. Без этого
+// сброс 107 550 → 100 000 съел бы весь плюс месяца.
+// data.adjust — та же поправка, но заданная вручную, если считать надо не от текущего.
 function setBalance(ss, data) {
   var idx = propIndexByName(data.name);
   if (idx === -1) return createResponse(false, 'Неизвестный проп: ' + data.name);
@@ -463,14 +492,25 @@ function setBalance(ss, data) {
   var at = data.at ? new Date(data.at) : new Date();
   if (isNaN(at.getTime())) return createResponse(false, 'Некорректное время: ' + data.at);
 
+  var adjust = toNumber(data.adjust);
+  var was = null;
+  if (adjust === null && data.neutral === true) {
+    var trades = getTradesSheet(ss).getDataRange().getValues();
+    was = balanceAt(ss, trades, idx, at);
+    if (was === null) return createResponse(false, 'не смог посчитать баланс до сброса');
+    adjust = balance - was;
+  }
+
   var sheet = ensureBalancesSheet(ss);
-  sheet.appendRow([PROPS[idx], balance, at]);
+  sheet.appendRow([PROPS[idx], balance, at, adjust === null ? '' : adjust]);
   sheet.getRange(sheet.getLastRow(), 3).setNumberFormat('dd.MM.yyyy HH:mm');
 
   var tz = ss.getSpreadsheetTimeZone();
   return createResponse(true, 'Balance set', {
     name: PROPS[idx],
     balance: balance,
+    was: was,
+    adjust: adjust,
     at: Utilities.formatDate(at, tz, 'dd.MM.yyyy HH:mm')
   });
 }
@@ -569,7 +609,10 @@ function getStats(ss, sheet) {
       pnlSince: (current !== null && snap) ? current - snap.balance : 0,
       currentBalance: current,
       monthStartBalance: atMonthStart,
-      monthUsd: (current !== null && atMonthStart !== null) ? current - atMonthStart : null,
+      // из месяца вычитаем сбросы и выплаты — они не результат торговли
+      monthUsd: (current !== null && atMonthStart !== null)
+        ? current - atMonthStart - adjustSumBetween(ss, PROPS[p], monthStart, now)
+        : null,
       monthPct: null,
       monthTrades: 0,
       monthWins: 0,
@@ -1221,6 +1264,14 @@ function buildStats(ss, tradesSheet) {
       snapBal + '+' + closedBetween('>', snapAt) + ')';
   }
 
+  // Сумма не торговых изменений баланса в (after, until] — сбросы после фазы,
+  // выплаты, доливки. Вычитается из любого P&L, который через них перешагивает.
+  function adjustSumF(p, after, until) {
+    var prop = '"' + PROPS[p].replace(/"/g, '""') + '"';
+    return 'SUMIFS(' + B + '$D:$D,' + B + '$A:$A,' + prop +
+      ',' + B + '$C:$C,">"&' + after + ',' + B + '$C:$C,"<="&' + until + ')';
+  }
+
   // Текущий баланс — без верхней границы по времени: NOW() в таблице и часы
   // сервера, ставящего момент закрытия, могут разойтись на секунды.
   var farFuture = 'DATE(2999,1,1)';
@@ -1251,7 +1302,8 @@ function buildStats(ss, tradesSheet) {
       '=IF($F' + sr + '="","",$F' + sr + '-IF($D' + sr + '="",$B' + sr + ',$C' + sr + '))'));
     // G/H — месяц ОТ БАЛАНСА: текущий − баланс на 1-е число; % от размера аккаунта
     sheet.getRange(sr, 7).setFormula(loc(
-      '=IF($F' + sr + '="","",$F' + sr + '-' + balanceAtF(s, monthStart) + ')'));
+      '=IF($F' + sr + '="","",$F' + sr + '-' + balanceAtF(s, monthStart) +
+      '-' + adjustSumF(s, monthStart, 'NOW()') + ')'));
     sheet.getRange(sr, 8).setFormula(loc('=IF($G' + sr + '="","",$G' + sr + '/$B' + sr + '*100)'));
     sheet.getRange(sr, 9).setFormula(loc('=COUNTIFS(' + thisMonth + ',' + sUsd + ',"<>")'));
     sheet.getRange(sr, 10).setFormula(loc('=COUNTIFS(' + sRisk + ',"<>",' + sUsd + ',"")'));
@@ -1333,7 +1385,8 @@ function buildStats(ss, tradesSheet) {
       sheet.getRange(r, col).setFormula(loc(
         '=COUNTIFS(' + dateFilter + ',' + usdCol + ',"<>")'));
       sheet.getRange(r, col + 1).setFormula(loc(
-        '=IF($F$' + (2 + p) + '="","",' + endBalance + '-' + balanceAtF(p, '$A' + r) + ')'));
+        '=IF($F$' + (2 + p) + '="","",' + endBalance + '-' + balanceAtF(p, '$A' + r) +
+        '-' + adjustSumF(p, '$A' + r, monthEnd) + ')'));
       sheet.getRange(r, col + 2).setFormula(loc(
         '=IF(' + usdCell + '="","",' + usdCell + '/$B$' + (2 + p) + '*100)'));
       sheet.getRange(r, col + 3).setFormula(loc(
