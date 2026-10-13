@@ -1039,7 +1039,14 @@ bot.on('text', async (ctx) => {
     const awaitingText = ['waiting_against', 'waiting_thoughts', 'waiting_risk_custom', 'closing_result', 'closing_usd', 'closing_errors']
       .includes(state.step);
 
-    if (links.length > 0 && !awaitingText) {
+    // ...но голая ссылка без единого слова — это всегда новая сделка. Аргументы и
+    // мысли так не пишут, а вот брошенный диалог запросто съедал новую ссылку как
+    // ответ на свой вопрос и ехал дальше со старым активом (13.10).
+    // На шагах закрытия исключения нет: там ссылку присылают по делу.
+    const bareLink = links.length === 1 && text.trim().replace(/\/+$/, '') === links[0];
+    const entryText = ['waiting_against', 'waiting_thoughts'].includes(state.step);
+
+    if (links.length > 0 && (!awaitingText || (bareLink && entryText))) {
       // Пропы и размеры счетов понадобятся через пару вопросов — греем их сейчас,
       // параллельно съёмке, чтобы к моменту кнопок ответ уже лежал в кэше.
       startPropInfo();
