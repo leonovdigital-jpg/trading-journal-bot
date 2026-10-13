@@ -41,6 +41,7 @@ const userStates = {
 };
 
 function restoreStates() {
+  const obsolete = [];
   let saved;
   try {
     saved = JSON.parse(require('fs').readFileSync(STATE_FILE, 'utf8'));
@@ -60,10 +61,27 @@ function restoreStates() {
         st.closeShots.catch(() => {});
       }
     }
+    // Вопрос Long/Short убран 13.10. Диалог, застрявший на нём, переводим на
+    // новый шаг и переспрашиваем — иначе у человека остаются кнопки, которые
+    // больше никто не слушает, и диалог становится тупиком.
+    if (st.step === 'waiting_position') {
+      st.step = 'waiting_against';
+      obsolete.push(Number(chatId));
+    }
+
     rawStates.set(Number(chatId), st);
   }
 
   if (rawStates.size) console.log(`♻️ Восстановлено диалогов: ${rawStates.size}`);
+
+  // Переведённый шаг надо сохранить, иначе каждый следующий перезапуск
+  // переспрашивал бы заново.
+  if (obsolete.length) saveStates();
+
+  obsolete.forEach(chatId => {
+    bot.telegram.sendMessage(chatId, `Вопрос про Long/Short убран.\n\n${AGAINST_QUESTION}`)
+      .catch(error => console.error('Не смог переспросить:', error.message));
+  });
 }
 
 // Apps Script отвечает на POST редиректом на script.googleusercontent.com/…/echo,
@@ -457,7 +475,7 @@ async function uploadToGoogleSheets(trade, links) {
       session: trade.session,
       pair: trade.pair,
       thoughts: trade.thoughts,
-      position: trade.position,
+      against: trade.against || '',
       accounts: trade.accounts,
       errors: '',
       grade: trade.grade || '',
@@ -624,15 +642,6 @@ function sessionKeyboard() {
   };
 }
 
-function positionKeyboard() {
-  return {
-    inline_keyboard: [
-      [{ text: 'Long', callback_data: 'pos_Long' }],
-      [{ text: 'Short', callback_data: 'pos_Short' }]
-    ]
-  };
-}
-
 // Сессию берём из времени входа и спрашиваем, только если оно вне торговых окон
 // (раннее утро, вечер после закрытия NYSE, выходные).
 async function afterAsset(ctx, state) {
@@ -640,15 +649,15 @@ async function afterAsset(ctx, state) {
 
   if (session) {
     state.session = session;
-    state.step = 'waiting_position';
+    state.step = 'waiting_against';
     userStates.set(ctx.chat.id, state);
     // Определённую сессию всегда показываем и даём переопределить: бот считает по часам,
     // а пользователь мог войти раньше, чем прислал ссылку.
-    await ctx.reply(`Сессия: ${session}\n\nLong или Short?`, {
+    await ctx.reply(`Сессия: ${session}\n\n${AGAINST_QUESTION}`, {
       reply_markup: {
-        inline_keyboard: positionKeyboard().inline_keyboard.concat([
+        inline_keyboard: [
           [{ text: `🔁 Сессия ${session} — поменять`, callback_data: 'session_change' }]
-        ])
+        ]
       }
     });
     return;
@@ -658,6 +667,8 @@ async function afterAsset(ctx, state) {
   userStates.set(ctx.chat.id, state);
   await ctx.reply('Сейчас вне твоих сессий — выбери вручную:', { reply_markup: sessionKeyboard() });
 }
+
+const AGAINST_QUESTION = 'Аргументы против:';
 
 function gradeKeyboard() {
   return {
@@ -695,7 +706,7 @@ async function saveNewTrade(ctx, state) {
     session: state.session,
     pair: state.asset,
     thoughts: state.thoughts,
-    position: state.position,
+    against: state.against,
     grade: state.grade,
     accounts: state.accSelected.map(name => ({ name: name, risk: state.accRisks[name] }))
   };
@@ -720,7 +731,7 @@ async function saveNewTrade(ctx, state) {
     : (state.snapshots ? `\n📸 Скрины: 1h, 4h, 1d${DXY_FOR.includes(state.asset) ? ' + DXY' : ''} — записаны` : '');
 
   await ctx.reply(
-    `✅ ${state.asset} ${state.position} · оценка ${state.grade} · ${riskSummary(state)}${shots}\n\n` +
+    `✅ ${state.asset} · класс ${state.grade} · ${riskSummary(state)}${shots}\n\n` +
     'Записал.\n<b>Ты дал цену слова, у тебя есть 5 минут…</b>\n\n/closetrade для закрытия',
     { parse_mode: 'HTML' }
   );
@@ -1025,7 +1036,7 @@ bot.on('text', async (ctx) => {
     const links = text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+/g) || [];
 
     // Шаги, на которых бот ждёт именно текст — там ссылка означает не новую сделку
-    const awaitingText = ['waiting_thoughts', 'waiting_risk_custom', 'closing_result', 'closing_usd', 'closing_errors']
+    const awaitingText = ['waiting_against', 'waiting_thoughts', 'waiting_risk_custom', 'closing_result', 'closing_usd', 'closing_errors']
       .includes(state.step);
 
     if (links.length > 0 && !awaitingText) {
@@ -1093,11 +1104,18 @@ bot.on('text', async (ctx) => {
       state.riskIdx++;
       await askRiskForNext(ctx, state);
 
-    } else if (state.step === 'waiting_thoughts') {
-      state.thoughts = text;
+    } else if (state.step === 'waiting_against') {
+      state.against = text;
       state.step = 'waiting_grade';
       userStates.set(chatId, state);
-      await ctx.reply('Оцени позицию:', { reply_markup: gradeKeyboard() });
+      await ctx.reply('Класс позиции:', { reply_markup: gradeKeyboard() });
+
+    } else if (state.step === 'waiting_thoughts') {
+      // Мысли — последний вопрос: ответил и сразу пишем сделку.
+      state.thoughts = text;
+      state.step = 'saving';
+      userStates.set(chatId, state);
+      await saveNewTrade(ctx, state);
 
     } else if (state.step === 'closing_errors') {
       state.closeErrors = text.trim();
@@ -1120,7 +1138,7 @@ bot.on('text', async (ctx) => {
       state.closeIdx++;
       await askUsdForNext(ctx, state);
 
-    } else if (['waiting_asset', 'waiting_session', 'waiting_position', 'waiting_accounts', 'waiting_risk', 'waiting_grade', 'closing_select_trade'].includes(state.step)) {
+    } else if (['waiting_asset', 'waiting_session', 'waiting_accounts', 'waiting_risk', 'waiting_grade', 'closing_select_trade'].includes(state.step)) {
       await ctx.reply('Нажми кнопку выше 👆 или /reset чтобы начать заново.');
 
     } else {
@@ -1164,31 +1182,10 @@ bot.on('callback_query', async (ctx) => {
 
     } else if (data.startsWith('session_')) {
       state.session = data.replace('session_', '');
-      state.step = 'waiting_position';
+      state.step = 'waiting_against';
       userStates.set(chatId, state);
 
-      await ctx.reply('Long или Short?', { reply_markup: positionKeyboard() });
-
-    } else if (data.startsWith('pos_')) {
-      // Без этой проверки кнопка Long/Short, нажатая на шаге выбора сессии,
-      // протаскивала диалог дальше, и сделка записывалась с пустой сессией.
-      if (state.step !== 'waiting_position') {
-        await ack('Сначала выбери сессию');
-        return;
-      }
-      state.position = data.replace('pos_', '');
-      state.step = 'waiting_accounts';
-      const info = await fetchPropInfo();
-      state.props = info.props;
-      state.sizes = info.sizes;
-      state.accSelected = [];
-      state.accRisks = {};
-      state.accRiskUsd = {};
-      userStates.set(chatId, state);
-
-      await ctx.reply('На каких аккаунтах вошёл? (можно несколько)', {
-        reply_markup: accountsKeyboard(state.props, state.accSelected)
-      });
+      await ctx.reply(AGAINST_QUESTION);
 
     } else if (data.startsWith('accsel_')) {
       if (state.step !== 'waiting_accounts') {
@@ -1243,10 +1240,19 @@ bot.on('callback_query', async (ctx) => {
         return;
       }
       state.grade = data.replace('grade_', '');
-      state.step = 'saving';
+      state.step = 'waiting_accounts';
+      const info = await fetchPropInfo();
+      state.props = info.props;
+      state.sizes = info.sizes;
+      state.accSelected = [];
+      state.accRisks = {};
+      state.accRiskUsd = {};
       userStates.set(chatId, state);
       await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
-      await saveNewTrade(ctx, state);
+
+      await ctx.reply('На каких аккаунтах вошёл? (можно несколько)', {
+        reply_markup: accountsKeyboard(state.props, state.accSelected)
+      });
 
     } else if (data === 'errors_skip') {
       if (state.step !== 'closing_errors') {
@@ -1273,7 +1279,7 @@ bot.on('callback_query', async (ctx) => {
       const closed = trade.closedProps.length > 0
         ? `\n✔️ Уже закрыто: ${trade.closedProps.map(p => `${p.name} ${fmtMoney(p.usd)}`).join(', ')}`
         : '';
-      const head = `✅ Закрываем: ${trade.pair} ${trade.position} (${trade.session})\n📍 Открыта: ${trade.date} в ${trade.time}\n💼 Открыто на: ${open}${closed}`;
+      const head = `✅ Закрываем: ${[trade.pair, trade.position].filter(Boolean).join(' ')} (${trade.session})\n📍 Открыта: ${trade.date} в ${trade.time}\n💼 Открыто на: ${open}${closed}`;
 
       // Скрины закрытия бот снимает сам — 5м и 1ч по тому же брокеру, что и вход.
       // Символ помним с открытия; если не знаем (сделка из старых или бот не на сервере),

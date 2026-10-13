@@ -7,17 +7,23 @@ var PROP_DEFAULT_BALANCE = {
   'FundingPips': 100000
 };
 
-var PROP_START_COL = 22;   // V
+var PROP_START_COL = 23;   // W
 var COLS_PER_PROP = 4;     // Risk %, $, %, RR
 
-var COL_TAKESTOP   = 15;   // O (устаревшее)
-var COL_RISK_OLD   = 16;   // P (устаревшее)
-var COL_RR_OLD     = 17;   // Q (устаревшее)
-var COL_RESULT     = 18;   // R — скрин закрытия, 5 минут
-var COL_RESULT_1H  = 19;   // S — скрин закрытия, 1 час
-var COL_ERRORS     = 7;    // G — ошибки после сделки / выводы
-var COL_GRADE      = 20;   // T — оценка позиции (A / A (-) / B / C)
-var COL_ACCOUNT_OLD = 21;  // U — аккаунт (историческое)
+// 13.10.2026 после «Мыслей до» вставлена колонка «Аргументы против» —
+// всё, что правее, сдвинулось на одну.
+var COL_AGAINST    = 6;    // F — аргументы против входа
+var COL_POSITION   = 7;    // G — Long/Short (историческое: вопрос больше не задаётся)
+var COL_ERRORS     = 8;    // H — ошибки после сделки / выводы
+var COL_SHOT_5M    = 9;    // I — скрин входа 1-5м
+var COL_SHOT_1H    = 10;   // J — остальные таймфреймы и DXY: J..O
+var COL_TAKESTOP   = 16;   // P (устаревшее)
+var COL_RISK_OLD   = 17;   // Q (устаревшее)
+var COL_RR_OLD     = 18;   // R (устаревшее)
+var COL_RESULT     = 19;   // S — скрин закрытия, 5 минут
+var COL_RESULT_1H  = 20;   // T — скрин закрытия, 1 час
+var COL_GRADE      = 21;   // U — класс позиции (A / A (-) / B / C)
+var COL_ACCOUNT_OLD = 22;  // V — аккаунт (историческое)
 
 var PROPS_SHEET = 'Props';
 var STATS_SHEET = 'Статистика';
@@ -162,6 +168,7 @@ function doPost(e) {
     if (data.action === 'clearCells')    return clearCells(sheet, data);
     if (data.action === 'setCells')      return setCells(sheet, data);
     if (data.action === 'addResult1hColumn') return addResult1hColumn(ss, sheet);
+    if (data.action === 'addArgumentsColumn') return addArgumentsColumn(ss, sheet);
     if (data.action === 'setTimezone') {
       ss.setSpreadsheetTimeZone(data.timezone);
       return createResponse(true, 'timezone set', { timezone: ss.getSpreadsheetTimeZone() });
@@ -220,6 +227,24 @@ function deleteTestRow(sheet, data) {
 // закрытия, чтобы два скрина лежали рядом. Всё правее — оценка, аккаунты и блок
 // пропов — сдвигается на колонку, поэтому следом перестраиваем шапку, формулы и
 // статистику. Повторный вызов ничего не делает.
+// Миграция 13.10.2026: колонка «Аргументы против» сразу после «Мыслей до».
+// Идемпотентна — повторный вызов ничего не делает.
+function addArgumentsColumn(ss, sheet) {
+  if (String(sheet.getRange(1, COL_AGAINST).getValue()).indexOf('ротив') !== -1) {
+    return createResponse(true, 'уже сделано');
+  }
+
+  sheet.insertColumnAfter(COL_AGAINST - 1);          // вставляем ПОСЛЕ «Мыслей до» (E)
+  buildHeaders(sheet);
+  var rows = applyAllFormulas(sheet);
+  formatSheet(sheet);
+  var months = buildStats(ss, sheet);
+
+  return createResponse(true, 'колонка добавлена', {
+    formulas: rows, months: months, lastCol: sheet.getLastColumn()
+  });
+}
+
 function addResult1hColumn(ss, sheet) {
   if (String(sheet.getRange(1, COL_RESULT_1H).getValue()).indexOf('1ч') !== -1) {
     return createResponse(true, 'уже сделано');
@@ -290,8 +315,8 @@ function setScreenshots(sheet, data) {
   if (!row || row < 2 || row > sheet.getLastRow()) return createResponse(false, 'bad row');
 
   var links = data.links || {};
-  var cells = [[9, links.h1], [10, links.h4], [11, links.d1],
-               [12, links.dxy1h], [13, links.dxy4h], [14, links.dxy1d],
+  var cells = [[COL_SHOT_1H, links.h1], [COL_SHOT_1H + 1, links.h4], [COL_SHOT_1H + 2, links.d1],
+               [COL_SHOT_1H + 3, links.dxy1h], [COL_SHOT_1H + 4, links.dxy4h], [COL_SHOT_1H + 5, links.dxy1d],
                [COL_RESULT, links.close5m], [COL_RESULT_1H, links.close1h]];
   var written = [];
   var skipped = [];
@@ -741,7 +766,7 @@ function getOpenTrades(sheet) {
       row: i + 1,
       pair: String(pair),
       session: String(values[i][2] || ''),
-      position: String(values[i][5] || ''),
+      position: String(values[i][COL_POSITION - 1] || ''),
       openProps: openProps,
       closedProps: closedProps,
       date: fmt(dateTime, tz, 'dd.MM.yyyy'),
@@ -774,6 +799,7 @@ function addNewTrade(sheet, data) {
     data.session || '',
     data.pair || '',
     data.thoughts || '',
+    data.against || '',
     data.position || '',
     data.errors || '',
     cleanLink(shot5m),
@@ -1052,6 +1078,7 @@ function buildHeaders(sheet) {
   sheet.getRange(1, PROP_START_COL, sheet.getMaxRows(), sheet.getMaxColumns() - PROP_START_COL + 1)
     .clearDataValidations();
 
+  sheet.getRange(1, COL_AGAINST).setValue('Аргументы против');
   sheet.getRange(1, COL_TAKESTOP).setValue('Take/Stop (ист.)');
   sheet.getRange(1, COL_RISK_OLD).setValue('Risk (ист.)');
   sheet.getRange(1, COL_RR_OLD).setValue('RR (ист.)');
