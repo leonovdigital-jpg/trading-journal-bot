@@ -666,7 +666,7 @@ function assetKeyboard() {
 
 async function startEntry(ctx) {
   userStates.set(ctx.chat.id, { step: 'waiting_against' });
-  await ctx.reply(AGAINST_QUESTION);
+  await ctx.reply(AGAINST_QUESTION, { reply_markup: entryKeyboard() });
 }
 
 function gradeKeyboard() {
@@ -848,6 +848,11 @@ bot.start((ctx) => {
     '/tv — проверить съёмщик скринов\n/reset — сбросить диалог',
     { reply_markup: entryKeyboard() });
 });
+
+// Дублёр кнопки: ВХОД — reply-клавиатура, её Telegram иногда сворачивает в иконку.
+// Команда всегда доступна из синего меню рядом с полем ввода.
+bot.command('vhod', async (ctx) => { await startEntry(ctx); });
+bot.command('vxod', async (ctx) => { await startEntry(ctx); });
 
 bot.command('reset', async (ctx) => {
   userStates.delete(ctx.chat.id);
@@ -1083,7 +1088,7 @@ bot.on('text', async (ctx) => {
       state.against = text;
       state.step = 'waiting_thoughts';
       userStates.set(chatId, state);
-      await ctx.reply('Напиши свои мысли перед входом:');
+      await ctx.reply('Напиши свои мысли перед входом:', { reply_markup: entryKeyboard() });
 
     } else if (state.step === 'waiting_thoughts') {
       state.thoughts = text;
@@ -1116,7 +1121,10 @@ bot.on('text', async (ctx) => {
       await ctx.reply('Нажми кнопку выше 👆 или /reset чтобы начать заново.');
 
     } else {
-      await ctx.reply('Не понял. Отправь Share-ссылки с TradingView, или /closetrade чтобы закрыть сделку.');
+      // Заодно возвращаем кнопку: она приходит только вместе с сообщением,
+      // и если её когда-то смахнули, иначе её не вернуть ничем кроме /start.
+      await ctx.reply('Не понял. Нажми ВХОД, чтобы записать сделку, или /closetrade чтобы закрыть.',
+        { reply_markup: entryKeyboard() });
     }
   } catch (err) {
     console.error('❌ Error in text handler:', err.message, err.stack);
@@ -1363,6 +1371,17 @@ if (require.main === module) app.listen(PORT, async () => {
 
   restoreStates();
   startWatchdog();
+
+  // Список команд в синем меню рядом с полем ввода — вход должен быть первым.
+  bot.telegram.setMyCommands([
+    { command: 'vhod', description: '🧨 Начать вход в сделку' },
+    { command: 'closetrade', description: 'Закрыть сделку' },
+    { command: 'stats', description: 'Балансы и месяц по пропам' },
+    { command: 'balance', description: 'Поправить баланс пропа' },
+    { command: 'shots', description: 'Дослать скрины в последнюю сделку' },
+    { command: 'tv', description: 'Проверить съёмщик скринов' },
+    { command: 'reset', description: 'Сбросить диалог' }
+  ]).catch(error => console.error('setMyCommands:', error.message));
   startPropInfo();        // прогреваем список пропов и размеры счетов до первой кнопки
 
   try {
