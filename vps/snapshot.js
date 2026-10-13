@@ -16,6 +16,26 @@ const OFFSET = 0.15;                                   // сдвиг графи�
 const TF_KEYS = { "5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "1D" };
 const DEFAULT_TFS = ["1h", "4h", "1d"];
 
+// Скрин входа на 5 минутах не должен захватывать прошлые дни — только сегодняшний.
+// После Alt+R в кадре ровно 14.1 часа (замерено 13.10: Alt+R сбрасывает и масштаб,
+// поэтому величина стабильна и зум не накапливается на графике пользователя).
+// Один щелчок колеса сжимает кадр в 1.109 раза — это тоже замер, 5 щелчков дали 8.4 ч.
+const SPAN_AFTER_RESET_H = 14.1;
+const ZOOM_RATIO = 1.109;
+const TARGET_SPAN_H = 8.4;        // влезает в сегодня при любом входе начиная с 09:00
+
+// Сколько щелчков колеса нужно, чтобы в кадр не попал вчерашний день.
+function zoomStepsForToday(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Minsk", hour: "2-digit", minute: "2-digit", hour12: false
+  }).formatToParts(now);
+  const get = t => Number(parts.find(p => p.type === t).value);
+  const sinceMidnight = get("hour") + get("minute") / 60;
+
+  const target = Math.max(1, Math.min(TARGET_SPAN_H, sinceMidnight));
+  return Math.ceil(Math.log(SPAN_AFTER_RESET_H / target) / Math.log(ZOOM_RATIO));
+}
+
 // Подключение держим одно на весь процесс. Раньше connectOverCDP звался на каждую
 // задачу и на каждую проверку здоровья, а закрыть подключение нечем (close() убивает
 // сам браузер) — за двое суток накопилось 1222 живых соединения. Chromium рассылает
@@ -98,10 +118,24 @@ async function takeSnapshots(symbols, opts = {}) {
   for (const symbol of symbols) {
     await setSymbol(page, symbol);
 
-    for (const name of tfs) {
+    // У DXY свой набор таймфреймов: 5-минутка индекса в журнале не нужна.
+    const symbolTfs = (opts.tfsBySymbol && opts.tfsBySymbol[symbol]) || tfs;
+
+    for (const name of symbolTfs) {
       await setInterval_(page, pane, TF_KEYS[name]);
-      await page.keyboard.press("Alt+r");          // вернуть вид к последним барам
+      await page.keyboard.press("Alt+r");          // вернуть вид к последним барам (и масштаб)
       await page.waitForTimeout(2500);             // даём разметке дорисоваться
+
+      if (name === "5m" && opts.todayOnly) {
+        const steps = zoomStepsForToday();
+        const zx = box.x + box.width * 0.92;       // зумим у правого края — последние бары на месте
+        for (let i = 0; i < steps; i++) {
+          await page.mouse.move(zx, y);
+          await page.mouse.wheel(0, -120);
+          await page.waitForTimeout(150);
+        }
+        await page.waitForTimeout(1500);
+      }
 
       const x0 = box.x + box.width * 0.85, x1 = x0 - box.width * OFFSET;
       await page.mouse.move(x0, y);

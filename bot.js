@@ -617,9 +617,11 @@ function riskSummary(state) {
 async function askRiskForNext(ctx, state) {
   const name = state.accSelected[state.riskIdx];
   if (!name) {
-    state.step = 'waiting_thoughts';
+    // Риск — последний вопрос: дальше только съёмка и запись.
+    state.step = 'saving';
     userStates.set(ctx.chat.id, state);
-    await ctx.reply(`Аккаунты: ${riskSummary(state)}\n\nНапиши свои мысли перед входом:`);
+    await ctx.reply(`Аккаунты: ${riskSummary(state)}`);
+    await saveNewTrade(ctx, state);
     return;
   }
 
@@ -642,33 +644,30 @@ function sessionKeyboard() {
   };
 }
 
-// Сессию берём из времени входа и спрашиваем, только если оно вне торговых окон
-// (раннее утро, вечер после закрытия NYSE, выходные).
-async function afterAsset(ctx, state) {
-  const session = detectSession();
+// Вход начинается только с нажатия большой кнопки. Смысл — поставить паузу между
+// желанием войти и входом: пока отвечаешь на вопросы, эмоция успевает осесть.
+// Кнопка висит под полем ввода постоянно, нажатие в любой момент стирает прошлый
+// незаконченный опрос и начинает заново.
+const ENTRY_BUTTON = 'ВХОД';
+const AGAINST_QUESTION = '🧨🧨 Аргументы против?';
+const ASSETS = ['UK100', 'USDCHF', 'US30'];
+// Скрин входа бот снимает сам: 5 минут (в пределах сегодняшнего дня), 1h, 4h, 1d.
+// У DXY пятиминутка не нужна — в журнале под него только три колонки.
+const ENTRY_TFS = ['5m', '1h', '4h', '1d'];
+const DXY_TFS = ['1h', '4h', '1d'];
 
-  if (session) {
-    state.session = session;
-    state.step = 'waiting_against';
-    userStates.set(ctx.chat.id, state);
-    // Определённую сессию всегда показываем и даём переопределить: бот считает по часам,
-    // а пользователь мог войти раньше, чем прислал ссылку.
-    await ctx.reply(`Сессия: ${session}\n\n${AGAINST_QUESTION}`, {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: `🔁 Сессия ${session} — поменять`, callback_data: 'session_change' }]
-        ]
-      }
-    });
-    return;
-  }
-
-  state.step = 'waiting_session';
-  userStates.set(ctx.chat.id, state);
-  await ctx.reply('Сейчас вне твоих сессий — выбери вручную:', { reply_markup: sessionKeyboard() });
+function entryKeyboard() {
+  return { keyboard: [[{ text: ENTRY_BUTTON }]], resize_keyboard: true, is_persistent: true };
 }
 
-const AGAINST_QUESTION = 'Аргументы против:';
+function assetKeyboard() {
+  return { inline_keyboard: ASSETS.map(a => [{ text: a, callback_data: `asset_${a}` }]) };
+}
+
+async function startEntry(ctx) {
+  userStates.set(ctx.chat.id, { step: 'waiting_against' });
+  await ctx.reply(AGAINST_QUESTION);
+}
 
 function gradeKeyboard() {
   return {
@@ -682,17 +681,19 @@ function gradeKeyboard() {
 }
 
 async function saveNewTrade(ctx, state) {
-  let links = state.links;
+  // Ссылок от пользователя больше нет — всё снимает бот. Если съёмка упала,
+  // сделка всё равно записывается, а скрины досылаются потом.
+  let links = [];
   let snapshotError = null;
 
   // Скрины снимаются параллельно опросу; здесь просто забираем результат.
   // Журнал не должен зависеть от воркера: если он не справился — пишем сделку
   // с одним скрином и говорим об этом прямо.
   if (state.snapshots) {
-    await ctx.reply('⏳ Забираю остальные таймфреймы...');
+    await ctx.reply('⏳ Забираю скрины...');
     try {
       const s = await state.snapshots;
-      links = [state.links[0], s['1h'], s['4h'], s['1d'], s.dxy1h, s.dxy4h, s.dxy1d];
+      links = [s['5m'], s['1h'], s['4h'], s['1d'], s.dxy1h, s.dxy4h, s.dxy1d];
     } catch (error) {
       snapshotError = error.message;
       console.error('Snapshots failed:', snapshotError);
@@ -701,9 +702,12 @@ async function saveNewTrade(ctx, state) {
 
   await ctx.reply('⏳ Загружаю в журнал...');
 
+  // Сессию считаем по часам в момент записи — это и есть время входа.
+  const session = state.session || detectSession();
+
   const sheetData = {
     day: new Date().toLocaleDateString('ru-RU', { weekday: 'long', timeZone: 'Europe/Minsk' }),
-    session: state.session,
+    session: session || '',
     pair: state.asset,
     thoughts: state.thoughts,
     against: state.against,
@@ -714,26 +718,36 @@ async function saveNewTrade(ctx, state) {
   const result = await uploadToGoogleSheets(sheetData, links);
 
   if (!result) {
-    state.step = 'waiting_grade';
+    state.step = 'waiting_accounts';
     userStates.set(ctx.chat.id, state);
-    await ctx.reply('❌ Не записалось в таблицу. Нажми оценку ещё раз.', { reply_markup: gradeKeyboard() });
+    await ctx.reply('❌ Не записалось в таблицу. Нажми «Готово» ещё раз.', {
+      reply_markup: accountsKeyboard(state.props, state.accSelected)
+    });
     return;
   }
 
-  userStates.set(ctx.chat.id, { step: 'idle' });
+  // Строку помним, чтобы можно было поправить сессию уже после записи.
+  userStates.set(ctx.chat.id, { step: 'idle', lastRow: result.row });
 
   if (snapshotError && state.symbol && result.row) {
     backfillScreenshots(ctx, result.row, state.symbol, snapshotError);
   }
 
   const shots = snapshotError
-    ? `\n\n⚠️ Скрины таймфреймов не снялись: ${snapshotError}\nПробую ещё раз сам — напишу, когда добавлю.`
-    : (state.snapshots ? `\n📸 Скрины: 1h, 4h, 1d${DXY_FOR.includes(state.asset) ? ' + DXY' : ''} — записаны` : '');
+    ? `\n\n⚠️ Скрины не снялись: ${snapshotError}\nПробую ещё раз сам — напишу, когда добавлю.`
+    : (state.snapshots ? `\n📸 Скрины: 5m, 1h, 4h, 1d${DXY_FOR.includes(state.asset) ? ' + DXY' : ''} — записаны` : '');
+
+  const sessionLine = session ? `\nСессия: ${session}` : '\n⚠️ Время вне твоих сессий — укажи вручную';
 
   await ctx.reply(
-    `✅ ${state.asset} · класс ${state.grade} · ${riskSummary(state)}${shots}\n\n` +
+    `✅ ${state.asset} · класс ${state.grade} · ${riskSummary(state)}${sessionLine}${shots}\n\n` +
     'Записал.\n<b>Ты дал цену слова, у тебя есть 5 минут…</b>\n\n/closetrade для закрытия',
-    { parse_mode: 'HTML' }
+    {
+      parse_mode: 'HTML',
+      reply_markup: session
+        ? { inline_keyboard: [[{ text: `🔁 Сессия ${session} — поменять`, callback_data: 'session_change' }]] }
+        : sessionKeyboard()
+    }
   );
 }
 
@@ -825,18 +839,19 @@ async function finishClose(ctx, state) {
 
 bot.start((ctx) => {
   userStates.delete(ctx.chat.id);
-  ctx.reply('👋 Привет! Кинь одну Share-ссылку с TradingView — снимок входа 1-5m.\n' +
-    '1h, 4h, 1d и DXY сниму сам с твоего графика.\n\n' +
-    'Если пришлёшь несколько ссылок сразу — возьму их как есть, в порядке:\n' +
-    '1-5m, 1h, 4h, 1d, DXY 1h, DXY 4h, DXY 1d\n\n' +
+  ctx.reply('👋 Нажми ВХОД, когда собрался входить.\n\n' +
+    'Сначала аргументы против, потом мысли, класс позиции, актив, аккаунты и риск.\n' +
+    'Скрины 5m, 1h, 4h, 1d (и DXY по USDCHF) сниму сам с твоего графика.\n\n' +
+    'Передумал — просто не отвечай. Нажмёшь ВХОД снова — начнём с чистого листа.\n\n' +
     '/closetrade — закрыть сделку\n/stats — балансы и текущий месяц по пропам\n' +
     '/balance — поправить баланс пропа\n/shots — дослать скрины в последнюю сделку\n' +
-    '/tv — проверить съёмщик скринов\n/reset — сбросить диалог');
+    '/tv — проверить съёмщик скринов\n/reset — сбросить диалог',
+    { reply_markup: entryKeyboard() });
 });
 
 bot.command('reset', async (ctx) => {
   userStates.delete(ctx.chat.id);
-  await ctx.reply('🔄 Сброшено. Отправляй ссылки с TradingView.');
+  await ctx.reply('🔄 Сброшено. Нажми ВХОД, когда соберёшься входить.', { reply_markup: entryKeyboard() });
 });
 
 // Дослать скрины в уже записанную сделку: /shots <ссылка на снимок входа>.
@@ -1033,60 +1048,13 @@ bot.on('text', async (ctx) => {
     const text = ctx.message.text;
     const state = userStates.get(chatId) || {};
 
-    const links = text.match(/https:\/\/(?:[a-z]*\.)?tradingview\.com\/x\/[a-zA-Z0-9]+/g) || [];
-
-    // Шаги, на которых бот ждёт именно текст — там ссылка означает не новую сделку
-    const awaitingText = ['waiting_against', 'waiting_thoughts', 'waiting_risk_custom', 'closing_result', 'closing_usd', 'closing_errors']
-      .includes(state.step);
-
-    // ...но голая ссылка без единого слова — это всегда новая сделка. Аргументы и
-    // мысли так не пишут, а вот брошенный диалог запросто съедал новую ссылку как
-    // ответ на свой вопрос и ехал дальше со старым активом (13.10).
-    // На шагах закрытия исключения нет: там ссылку присылают по делу.
-    const bareLink = links.length === 1 && text.trim().replace(/\/+$/, '') === links[0];
-    const entryText = ['waiting_against', 'waiting_thoughts'].includes(state.step);
-
-    if (links.length > 0 && (!awaitingText || (bareLink && entryText))) {
-      // Пропы и размеры счетов понадобятся через пару вопросов — греем их сейчас,
-      // параллельно съёмке, чтобы к моменту кнопок ответ уже лежал в кэше.
-      startPropInfo();
-
-      // Одна ссылка + доступный воркер = авторежим: остальные шесть таймфреймов
-      // бот снимет сам с графика пользователя. Несколько ссылок — как раньше, вручную.
-      if (links.length === 1 && WORKER_URL) {
-        const symbol = await symbolFromLink(links[0]);
-        if (symbol) {
-          const asset = symbol.split(':').pop();
-          const withDxy = DXY_FOR.includes(asset);
-          const snapshots = requestSnapshots(symbol, dxyOpts(symbol));
-          snapshots.catch(() => {});   // ошибку разберём при записи, здесь только чтобы не падать
-
-          rememberSymbol(asset, symbol);
-          const state = { links: [links[0]], asset, symbol, snapshots };
-          await ctx.reply(`✅ ${asset} · снимок 1-5m принят\n\n⏳ 1h, 4h, 1d${withDxy ? ' и DXY' : ''} снимаю сам — будут готовы к концу опроса.`);
-          await afterAsset(ctx, state);
-          return;
-        }
-        await ctx.reply('Не понял символ из ссылки — дальше вручную.');
-      }
-
-      const tfNames = ['1-5m', '1h', '4h', '1d', 'DXY 1h', 'DXY 4h', 'DXY 1d'];
-      const display = links.map((_, i) => `${i + 1}. ${tfNames[i] || `Link ${i + 1}`}`).join('\n');
-
-      userStates.set(chatId, { links: links, step: 'waiting_asset' });
-
-      await ctx.reply(`✅ Получено ${links.length} ссылок:\n\n${display}\n\nДалее → выбери актив`);
-      await ctx.reply('Какой актив?', {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'USDCHF', callback_data: 'asset_USDCHF' }],
-            [{ text: 'UK100', callback_data: 'asset_UK100' }],
-            [{ text: 'US30', callback_data: 'asset_US30' }]
-          ]
-        }
-      });
+    // Единственная точка входа — кнопка. Ссылки больше не начинают сделку:
+    // смысл в том, чтобы вход нельзя было начать импульсивно, мимо опроса.
+    if (text.trim() === ENTRY_BUTTON) {
+      await startEntry(ctx);
       return;
     }
+
 
     if (state.step === 'waiting_risk_custom') {
       const name = state.accSelected[state.riskIdx];
@@ -1113,16 +1081,15 @@ bot.on('text', async (ctx) => {
 
     } else if (state.step === 'waiting_against') {
       state.against = text;
+      state.step = 'waiting_thoughts';
+      userStates.set(chatId, state);
+      await ctx.reply('Напиши свои мысли перед входом:');
+
+    } else if (state.step === 'waiting_thoughts') {
+      state.thoughts = text;
       state.step = 'waiting_grade';
       userStates.set(chatId, state);
       await ctx.reply('Класс позиции:', { reply_markup: gradeKeyboard() });
-
-    } else if (state.step === 'waiting_thoughts') {
-      // Мысли — последний вопрос: ответил и сразу пишем сделку.
-      state.thoughts = text;
-      state.step = 'saving';
-      userStates.set(chatId, state);
-      await saveNewTrade(ctx, state);
 
     } else if (state.step === 'closing_errors') {
       state.closeErrors = text.trim();
@@ -1145,7 +1112,7 @@ bot.on('text', async (ctx) => {
       state.closeIdx++;
       await askUsdForNext(ctx, state);
 
-    } else if (['waiting_asset', 'waiting_session', 'waiting_accounts', 'waiting_risk', 'waiting_grade', 'closing_select_trade'].includes(state.step)) {
+    } else if (['waiting_asset', 'waiting_accounts', 'waiting_risk', 'waiting_grade', 'closing_select_trade'].includes(state.step)) {
       await ctx.reply('Нажми кнопку выше 👆 или /reset чтобы начать заново.');
 
     } else {
@@ -1179,20 +1146,61 @@ bot.on('callback_query', async (ctx) => {
     const state = userStates.get(chatId) || {};
 
     if (data.startsWith('asset_')) {
+      if (state.step !== 'waiting_asset') {
+        await ack('Этот шаг уже пройден');
+        return;
+      }
       state.asset = data.replace('asset_', '');
-      await afterAsset(ctx, state);
+      state.symbol = symbolForPair(state.asset);
+
+      // Съёмку запускаем сразу, как узнали актив: она идёт ~полторы минуты
+      // параллельно вопросам про аккаунты и риск и успевает к записи.
+      if (state.symbol && WORKER_URL) {
+        state.snapshots = requestSnapshots(state.symbol, Object.assign(
+          { tfs: ENTRY_TFS, dxyTfs: DXY_TFS, todayOnly: true },
+          dxyOpts(state.symbol)
+        ));
+        state.snapshots.catch(() => {});   // разберём при записи, здесь только чтобы не падать
+      }
+
+      state.step = 'waiting_accounts';
+      const info = await fetchPropInfo();
+      state.props = info.props;
+      state.sizes = info.sizes;
+      state.accSelected = [];
+      state.accRisks = {};
+      state.accRiskUsd = {};
+      userStates.set(chatId, state);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+
+      const withDxy = DXY_FOR.includes(state.asset);
+      await ctx.reply(state.snapshots
+        ? `⏳ ${state.asset}: снимаю 5m, 1h, 4h, 1d${withDxy ? ' и DXY' : ''} — будут готовы к концу опроса.`
+        : `⚠️ ${state.asset}: не знаю символ брокера, скрины придётся дослать вручную.`);
+
+      await ctx.reply('На каких аккаунтах вошёл? (можно несколько)', {
+        reply_markup: accountsKeyboard(state.props, state.accSelected)
+      });
 
     } else if (data === 'session_change') {
-      state.step = 'waiting_session';
-      userStates.set(chatId, state);
       await ctx.reply('Какая сессия?', { reply_markup: sessionKeyboard() });
 
     } else if (data.startsWith('session_')) {
-      state.session = data.replace('session_', '');
-      state.step = 'waiting_against';
-      userStates.set(chatId, state);
-
-      await ctx.reply(AGAINST_QUESTION);
+      // Сессию правим уже в записанной строке: бот считает её по часам, а войти
+      // можно было раньше, чем нажал кнопку.
+      const picked = data.replace('session_', '');
+      if (!state.lastRow) {
+        await ack('Нечего править — сделка ещё не записана');
+        return;
+      }
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      const reply = await sheetsPost({
+        action: 'setCells', requestId: newRequestId(),
+        row: state.lastRow, values: { C: picked }
+      });
+      await ctx.reply(reply && reply.success === true
+        ? `✅ Сессия исправлена на ${picked}`
+        : '❌ Не записалось: ' + (reply && reply.message));
 
     } else if (data.startsWith('accsel_')) {
       if (state.step !== 'waiting_accounts') {
@@ -1247,19 +1255,11 @@ bot.on('callback_query', async (ctx) => {
         return;
       }
       state.grade = data.replace('grade_', '');
-      state.step = 'waiting_accounts';
-      const info = await fetchPropInfo();
-      state.props = info.props;
-      state.sizes = info.sizes;
-      state.accSelected = [];
-      state.accRisks = {};
-      state.accRiskUsd = {};
+      state.step = 'waiting_asset';
       userStates.set(chatId, state);
       await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
 
-      await ctx.reply('На каких аккаунтах вошёл? (можно несколько)', {
-        reply_markup: accountsKeyboard(state.props, state.accSelected)
-      });
+      await ctx.reply('Какой актив?', { reply_markup: assetKeyboard() });
 
     } else if (data === 'errors_skip') {
       if (state.step !== 'closing_errors') {

@@ -42,6 +42,10 @@ app.post("/snapshots", async (req, res) => {
   const body = req.body || {};
   const tfs = Array.isArray(body.tfs) && body.tfs.length ? body.tfs : ["1h", "4h", "1d"];
   const dxy = body.dxy === null || body.dxy === false ? null : String(body.dxy || DXY).trim();
+  // dxyTfs — отдельный набор для индекса (5-минутка DXY в журнале не нужна),
+  // todayOnly — зажать 5-минутку актива в пределах сегодняшнего дня.
+  const dxyTfs = Array.isArray(body.dxyTfs) && body.dxyTfs.length ? body.dxyTfs : tfs;
+  const todayOnly = body.todayOnly === true;
   const started = Date.now();
   console.log(`задача: ${symbol} [${tfs.join(", ")}]${dxy ? " + " + dxy : ""}${busy ? " (ждёт очереди)" : ""}`);
 
@@ -53,22 +57,25 @@ app.post("/snapshots", async (req, res) => {
       // Браузер могут перезапустить посреди съёмки — например, при обновлении системы.
       // Сервис поднимется сам за несколько секунд, поэтому один раз ждём и повторяем,
       // чтобы бот вообще не узнал о заминке.
+      const shotOpts = {
+        tfs: tfs, restoreSymbol: symbol, todayOnly: todayOnly,
+        tfsBySymbol: dxy ? { [dxy]: dxyTfs } : null
+      };
+
       let raw;
       try {
-        raw = await takeSnapshots(symbols, { tfs: tfs, restoreSymbol: symbol });
+        raw = await takeSnapshots(symbols, shotOpts);
       } catch (err) {
         const lost = /Target closed|browser has been closed|Target page, context or browser|websocket|ECONNREFUSED|без контекста|нет вкладки/i.test(err.message);
         if (!lost) throw err;
         console.log("браузер пропал посреди съёмки, жду его и повторяю:", err.message.split("\n")[0]);
         await new Promise(r => setTimeout(r, 15000));
-        raw = await takeSnapshots(symbols, { tfs: tfs, restoreSymbol: symbol });
+        raw = await takeSnapshots(symbols, shotOpts);
       }
 
       const links = {};
-      tfs.forEach(function (tf) {
-        links[tf] = raw[symbol + " " + tf];
-        if (dxy) links["dxy" + tf] = raw[dxy + " " + tf];
-      });
+      tfs.forEach(function (tf) { links[tf] = raw[symbol + " " + tf]; });
+      if (dxy) dxyTfs.forEach(function (tf) { links["dxy" + tf] = raw[dxy + " " + tf]; });
       const missing = Object.entries(links).filter(([, v]) => !v).map(([k]) => k);
       if (missing.length) throw new Error("не снялось: " + missing.join(", "));
       console.log(`готово за ${((Date.now() - started) / 1000).toFixed(0)} с`);
