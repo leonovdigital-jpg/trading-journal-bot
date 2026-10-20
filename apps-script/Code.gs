@@ -207,13 +207,16 @@ function deleteTestRow(sheet, data) {
   if (!row || row < 2 || row > sheet.getLastRow()) return createResponse(false, 'bad row');
 
   var pair = String(sheet.getRange(row, 4).getValue());
-  var thoughts = String(sheet.getRange(row, 5).getValue());
+  // Маркер ищем и в «Мыслях», и в «Аргументах против»: с 15.10 бот спрашивает
+  // только аргументы, и положить метку больше некуда.
+  var texts = String(sheet.getRange(row, 5).getValue()) + ' ' +
+              String(sheet.getRange(row, COL_AGAINST).getValue());
 
-  // Тестовой считаем строку с парой TEST-… или с маркером в «Мыслях» (data.match).
-  // Маркер нужен, когда тест гоняется на настоящем символе: в авторежиме бот берёт
-  // пару из ссылки TradingView, подменить её на TEST- нельзя.
+  // Тестовой считаем строку с парой TEST-… или с маркером в тексте (data.match).
+  // Маркер нужен, когда тест гоняется на настоящем символе: пару бот берёт из
+  // кнопки, подменить её на TEST- нельзя.
   var isTest = pair.indexOf('TEST-') === 0
-    || (!isEmpty(data.match) && thoughts.indexOf(String(data.match)) !== -1);
+    || (!isEmpty(data.match) && texts.indexOf(String(data.match)) !== -1);
   if (!isTest) return createResponse(false, 'row ' + row + ' is not a test row: ' + pair);
 
   sheet.deleteRow(row);

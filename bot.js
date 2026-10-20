@@ -474,7 +474,7 @@ async function uploadToGoogleSheets(trade, links) {
       day: trade.day,
       session: trade.session,
       pair: trade.pair,
-      thoughts: trade.thoughts,
+      thoughts: '',
       against: trade.against || '',
       accounts: trade.accounts,
       errors: '',
@@ -709,7 +709,6 @@ async function saveNewTrade(ctx, state) {
     day: new Date().toLocaleDateString('ru-RU', { weekday: 'long', timeZone: 'Europe/Minsk' }),
     session: session || '',
     pair: state.asset,
-    thoughts: state.thoughts,
     against: state.against,
     grade: state.grade,
     accounts: state.accSelected.map(name => ({ name: name, risk: state.accRisks[name] }))
@@ -840,7 +839,7 @@ async function finishClose(ctx, state) {
 bot.start((ctx) => {
   userStates.delete(ctx.chat.id);
   ctx.reply('👋 Нажми ВХОД, когда собрался входить.\n\n' +
-    'Сначала аргументы против, потом мысли, класс позиции, актив, аккаунты и риск.\n' +
+    'Сначала аргументы против, потом класс позиции, актив, аккаунты и риск.\n' +
     'Скрины 5m, 1h, 4h, 1d (и DXY по USDCHF) сниму сам с твоего графика.\n\n' +
     'Передумал — просто не отвечай. Нажмёшь ВХОД снова — начнём с чистого листа.\n\n' +
     '/closetrade — закрыть сделку\n/stats — балансы и текущий месяц по пропам\n' +
@@ -1086,12 +1085,6 @@ bot.on('text', async (ctx) => {
 
     } else if (state.step === 'waiting_against') {
       state.against = text;
-      state.step = 'waiting_thoughts';
-      userStates.set(chatId, state);
-      await ctx.reply('Напиши свои мысли перед входом:', { reply_markup: entryKeyboard() });
-
-    } else if (state.step === 'waiting_thoughts') {
-      state.thoughts = text;
       state.step = 'waiting_grade';
       userStates.set(chatId, state);
       await ctx.reply('Класс позиции:', { reply_markup: gradeKeyboard() });
