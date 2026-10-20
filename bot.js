@@ -932,6 +932,34 @@ bot.command('stats', async (ctx) => {
 // /balance 100k 98369     → зафиксировать фактический баланс пропа на текущий момент.
 // Проценты по сделкам считаются от РАЗМЕРА аккаунта (лист Props) и не меняются;
 // фиксация влияет только на «текущий баланс» = фиксация + сделки после неё.
+// Запись баланса — общая для обоих путей: кнопочного /balance и старой строки
+// «/balance instant 48789».
+async function writeBalance(ctx, name, amount, neutral) {
+  const reply = await sheetsPost({
+    action: 'setBalance', requestId: newRequestId(),
+    name: name, balance: amount, neutral: neutral
+  });
+  if (!reply || reply.success !== true) {
+    await ctx.reply('❌ Не записалось: ' + (reply && reply.message));
+    return;
+  }
+
+  const d = reply.data;
+  const note = neutral && d.adjust != null
+    ? `\n\n${fmtMoney(d.adjust)} не пойдут в статистику — это не результат торговли.`
+    : '';
+  await ctx.reply(
+    `✅ ${d.name}: ${Number(d.balance).toLocaleString('ru-RU')}$ зафиксировано ${d.at}${note}` +
+    '\n\nДальше баланс движется от этой суммы по закрытым сделкам. Проверить: /stats');
+}
+
+async function applyBalance(ctx, state, neutral) {
+  const name = state.balanceProp;
+  const amount = state.balanceAmount;
+  userStates.set(ctx.chat.id, { step: 'idle' });
+  await writeBalance(ctx, name, amount, neutral);
+}
+
 bot.command('balance', async (ctx) => {
   try {
     let args = ctx.message.text.replace(/^\/balance(@\w+)?\s*/i, '').trim();
@@ -944,20 +972,26 @@ bot.command('balance', async (ctx) => {
     const neutral = !!neutralWord;
     if (neutral) args = args.slice(neutralWord[0].length).trim();
 
+    // Голая /balance — показываем балансы и даём выбрать проп кнопкой.
+    // Старая форма «/balance instant 48789» продолжает работать.
     if (!args) {
       const stats = await getStats();
-      const lines = stats.props.map(p => p.currentBalance === null
-        ? `• ${p.name}: размер аккаунта не задан`
-        : `• ${p.name}: ${Number(p.currentBalance).toLocaleString('ru-RU')}$` +
-          (p.snapshotAt ? ` (зафиксировано ${Number(p.snapshotBalance).toLocaleString('ru-RU')}$ ${p.snapshotAt}, после: ${fmtMoney(p.pnlSince)})`
-                        : ` (аккаунт ${Number(p.accountSize).toLocaleString('ru-RU')}$ + сделки)`));
-      await ctx.reply(
-        `Балансы сейчас:\n${lines.join('\n')}\n\n` +
-        'Если на счёте другая сумма — зафиксируй факт:\n' +
-        '/balance <проп> <сумма>\nНапример: /balance instant 48789\n\n' +
-        'Прошёл фазу или забрал выплату — добавь слово «сброс»:\n' +
-        '/balance сброс instant 50000\n' +
-        'Тогда эта разница не попадёт в результат месяца.');
+      const current = {};
+      const lines = stats.props.map(p => {
+        current[p.name] = p.currentBalance;
+        return p.currentBalance === null
+          ? `• ${p.name}: размер аккаунта не задан`
+          : `• ${p.name}: ${Number(p.currentBalance).toLocaleString('ru-RU')}$`;
+      });
+
+      userStates.set(ctx.chat.id, { step: 'balance_pick', balances: current });
+
+      await ctx.reply(`Балансы сейчас:\n${lines.join('\n')}\n\nКакой проп правим?`, {
+        reply_markup: {
+          inline_keyboard: stats.props.map((p, i) => [{ text: p.name, callback_data: `bal_${i}` }])
+            .concat([[{ text: '❌ Отмена', callback_data: 'bal_cancel' }]])
+        }
+      });
       return;
     }
 
@@ -980,22 +1014,7 @@ bot.command('balance', async (ctx) => {
       return;
     }
 
-    const reply = await sheetsPost({
-      action: 'setBalance', requestId: newRequestId(),
-      name: matches[0], balance: amount, neutral: neutral
-    });
-    if (!reply || reply.success !== true) {
-      await ctx.reply('❌ Не записалось: ' + (reply && reply.message));
-      return;
-    }
-
-    const d = reply.data;
-    const note = neutral && d.adjust != null
-      ? `\n\n${fmtMoney(d.adjust)} не пойдут в статистику — это не результат торговли.`
-      : '';
-    await ctx.reply(
-      `✅ ${d.name}: ${Number(d.balance).toLocaleString('ru-RU')}$ зафиксировано ${d.at}${note}` +
-      '\n\nДальше баланс движется от этой суммы по закрытым сделкам. Проверить: /stats');
+    await writeBalance(ctx, matches[0], amount, neutral);
   } catch (error) {
     console.error('Balance error:', error.message);
     await ctx.reply('❌ Ошибка: ' + error.message);
@@ -1082,6 +1101,35 @@ bot.on('text', async (ctx) => {
       }
       state.riskIdx++;
       await askRiskForNext(ctx, state);
+
+    } else if (state.step === 'balance_amount') {
+      const amount = parseNumber(text);
+      if (amount === null || amount <= 0) {
+        await ctx.reply('Нужно положительное число, например 95439');
+        return;
+      }
+      state.balanceAmount = amount;
+
+      const was = (state.balances || {})[state.balanceProp];
+      const diff = was == null ? null : amount - was;
+
+      // Спрашиваем характер правки: пропущенная сделка должна попасть в месячную
+      // статистику, а сброс после фазы или выплата — нет. Разница между этими
+      // двумя случаями в месячном проценте бывает в тысячи долларов.
+      state.step = 'balance_kind';
+      userStates.set(chatId, state);
+
+      await ctx.reply(
+        `${state.balanceProp}: ${Number(amount).toLocaleString('ru-RU')}$` +
+        (diff === null ? '' : `\nРазница: ${fmtMoney(diff)}`) +
+        '\n\nЭто что?',
+        {
+          reply_markup: { inline_keyboard: [
+            [{ text: '📉 Результат торговли', callback_data: 'balkind_trade' }],
+            [{ text: '🔄 Сброс фазы или выплата', callback_data: 'balkind_reset' }]
+          ] }
+        }
+      );
 
     } else if (state.step === 'waiting_against') {
       state.against = text;
@@ -1319,6 +1367,38 @@ bot.on('callback_query', async (ctx) => {
       }
       state.closeIdx++;
       await askUsdForNext(ctx, state);
+
+    } else if (data === 'bal_cancel') {
+      userStates.set(chatId, { step: 'idle' });
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      await ctx.reply('❌ Отменено');
+
+    } else if (data.startsWith('bal_')) {
+      if (state.step !== 'balance_pick') {
+        await ack('Этот шаг уже пройден');
+        return;
+      }
+      const props = await getProps();
+      const name = props[Number(data.replace('bal_', ''))];
+      if (!name) {
+        await ack('Не понял проп');
+        return;
+      }
+      state.balanceProp = name;
+      state.step = 'balance_amount';
+      userStates.set(chatId, state);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+
+      const was = (state.balances || {})[name];
+      await ctx.reply(`${name}${was != null ? ` — сейчас ${Number(was).toLocaleString('ru-RU')}$` : ''}\n\nСколько на счёте? Напиши число, например 95439`);
+
+    } else if (data === 'balkind_trade' || data === 'balkind_reset') {
+      if (state.step !== 'balance_kind') {
+        await ack('Этот шаг уже пройден');
+        return;
+      }
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      await applyBalance(ctx, state, data === 'balkind_reset');
 
     } else if (data === 'close_cancel') {
       userStates.set(chatId, { step: 'idle' });
