@@ -656,12 +656,85 @@ const ASSETS = ['UK100', 'USDCHF', 'US30'];
 const ENTRY_TFS = ['5m', '1h', '4h', '1d'];
 const DXY_TFS = ['1h', '4h', '1d'];
 
+const ADD_BUTTON = '➕ Аккаунт';
+
 function entryKeyboard() {
-  return { keyboard: [[{ text: ENTRY_BUTTON }]], resize_keyboard: true, is_persistent: true };
+  return {
+    keyboard: [[{ text: ENTRY_BUTTON }, { text: ADD_BUTTON }]],
+    resize_keyboard: true, is_persistent: true
+  };
 }
 
 function assetKeyboard() {
   return { inline_keyboard: ASSETS.map(a => [{ text: a, callback_data: `asset_${a}` }]) };
+}
+
+async function finishAddAccount(ctx, state, pct) {
+  const trade = state.addTrade;
+  const name = state.addProp;
+  userStates.set(ctx.chat.id, { step: 'idle' });
+
+  const reply = await sheetsPost({
+    action: 'addAccount', requestId: newRequestId(),
+    row: trade.row, name: name, risk: pct
+  });
+
+  if (!reply || reply.success !== true) {
+    await ctx.reply('❌ Не записалось: ' + (reply && reply.message));
+    return;
+  }
+
+  const d = reply.data;
+  const size = (state.sizes || {})[name];
+  const money = size ? ` (${Math.round(size * pct / 100).toLocaleString('ru-RU')}$)` : '';
+  await ctx.reply(
+    `✅ ${d.pair}: добавлен ${d.name} — риск ${pct}%${money}\n` +
+    `Теперь в сделке: ${(d.accounts || []).join(', ')}\n\n/closetrade для закрытия`);
+}
+
+// Добор: вошёл на одном счёте, через время добавил ещё один в ту же позицию.
+// Сделку выбираем из незакрытых, аккаунт — из тех, которых в ней ещё нет.
+async function startAddAccount(ctx) {
+  const chatId = ctx.chat.id;
+
+  let data;
+  try {
+    data = await getOpenTrades();
+  } catch (error) {
+    await ctx.reply('❌ Не могу прочитать журнал: ' + error.message);
+    return;
+  }
+
+  const trades = data.allTrades || [];
+  if (trades.length === 0) {
+    await ctx.reply('❌ В журнале нет незакрытых сделок — добирать не к чему.');
+    return;
+  }
+
+  const props = await getProps();
+  // показываем только те сделки, куда вообще есть что добавить
+  const usable = trades.filter(t => freeProps(t, props).length > 0);
+  if (usable.length === 0) {
+    await ctx.reply('❌ Во всех незакрытых сделках уже стоят все аккаунты.');
+    return;
+  }
+
+  userStates.set(chatId, { step: 'add_select_trade', addTrades: usable });
+
+  await ctx.reply('В какую сделку добираешь?', {
+    reply_markup: {
+      inline_keyboard: usable.map((t, i) => [{
+        text: `${t.pair} · ${t.date} ${t.time} · ${t.openProps.map(p => p.name).join(', ')}`,
+        callback_data: `add_trade_${i}`
+      }]).concat([[{ text: '❌ Отмена', callback_data: 'add_cancel' }]])
+    }
+  });
+}
+
+// Аккаунты, которых в сделке ещё нет — ни открытых, ни уже закрытых.
+function freeProps(trade, props) {
+  const taken = (trade.openProps || []).concat(trade.closedProps || []).map(p => p.name);
+  return props.filter(name => !taken.includes(name));
 }
 
 async function startEntry(ctx) {
@@ -1078,6 +1151,11 @@ bot.on('text', async (ctx) => {
       return;
     }
 
+    if (text.trim() === ADD_BUTTON) {
+      await startAddAccount(ctx);
+      return;
+    }
+
 
     if (state.step === 'waiting_risk_custom') {
       const name = state.accSelected[state.riskIdx];
@@ -1101,6 +1179,25 @@ bot.on('text', async (ctx) => {
       }
       state.riskIdx++;
       await askRiskForNext(ctx, state);
+
+    } else if (state.step === 'add_risk_custom') {
+      const name = state.addProp;
+      const size = (state.sizes || {})[name];
+      const value = parseNumber(text);
+
+      if (size) {
+        if (value === null || value <= 0 || value > size * 0.1) {
+          await ctx.reply(`Не понял сумму. Введи риск в долларах, например 300 (не больше ${Math.round(size * 0.1)}$ — это 10% аккаунта)`);
+          return;
+        }
+        await finishAddAccount(ctx, state, usdToRiskPct(value, size));
+      } else {
+        if (value === null || value <= 0 || value > 10) {
+          await ctx.reply('Не понял. Введи риск в процентах, например 0.5');
+          return;
+        }
+        await finishAddAccount(ctx, state, value);
+      }
 
     } else if (state.step === 'balance_amount') {
       const amount = parseNumber(text);
@@ -1279,6 +1376,22 @@ bot.on('callback_query', async (ctx) => {
       await askRiskForNext(ctx, state);
 
     } else if (data.startsWith('prisk_')) {
+      // та же клавиатура обслуживает и добор аккаунта в открытую сделку
+      if (state.step === 'add_risk') {
+        const addName = state.addProp;
+        const addSize = (state.sizes || {})[addName];
+        const picked = data.replace('prisk_', '');
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+        if (picked === 'custom') {
+          state.step = 'add_risk_custom';
+          userStates.set(chatId, state);
+          await ctx.reply(addSize ? `Введи риск на ${addName} в долларах:` : `Введи риск на ${addName} в %:`);
+        } else {
+          await finishAddAccount(ctx, state, parseFloat(picked));
+        }
+        return;
+      }
+
       if (state.step !== 'waiting_risk') {
         await ack('Этот шаг уже пройден');
         return;
@@ -1367,6 +1480,57 @@ bot.on('callback_query', async (ctx) => {
       }
       state.closeIdx++;
       await askUsdForNext(ctx, state);
+
+    } else if (data === 'add_cancel') {
+      userStates.set(chatId, { step: 'idle' });
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      await ctx.reply('❌ Отменено');
+
+    } else if (data.startsWith('add_trade_')) {
+      if (state.step !== 'add_select_trade') {
+        await ack('Этот шаг уже пройден');
+        return;
+      }
+      const trade = (state.addTrades || [])[Number(data.replace('add_trade_', ''))];
+      if (!trade) {
+        await ack('Не нашёл сделку');
+        return;
+      }
+      const info = await fetchPropInfo();
+      state.addTrade = trade;
+      state.sizes = info.sizes;
+      state.addFree = freeProps(trade, info.props);
+      state.step = 'add_select_prop';
+      userStates.set(chatId, state);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+
+      await ctx.reply(`${trade.pair} · ${trade.date} ${trade.time}\nУже стоят: ${trade.openProps.map(p => p.name).join(', ') || '—'}\n\nКакой аккаунт добавляем?`, {
+        reply_markup: {
+          inline_keyboard: state.addFree.map((name, i) => [{ text: name, callback_data: `add_prop_${i}` }])
+            .concat([[{ text: '❌ Отмена', callback_data: 'add_cancel' }]])
+        }
+      });
+
+    } else if (data.startsWith('add_prop_')) {
+      if (state.step !== 'add_select_prop') {
+        await ack('Этот шаг уже пройден');
+        return;
+      }
+      const name = (state.addFree || [])[Number(data.replace('add_prop_', ''))];
+      if (!name) {
+        await ack('Не нашёл аккаунт');
+        return;
+      }
+      state.addProp = name;
+      state.step = 'add_risk';
+      userStates.set(chatId, state);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+
+      const size = (state.sizes || {})[name];
+      await ctx.reply(
+        size ? `Риск на ${name} — сколько $? (аккаунт ${size.toLocaleString('ru-RU')}$)`
+             : `Риск на ${name} (% от размера аккаунта)? Размер в Props не задан`,
+        { reply_markup: riskKeyboard(size) });
 
     } else if (data === 'bal_cancel') {
       userStates.set(chatId, { step: 'idle' });

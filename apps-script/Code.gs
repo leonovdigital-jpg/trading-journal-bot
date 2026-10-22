@@ -167,6 +167,7 @@ function doPost(e) {
     if (data.action === 'setScreenshots') return remember(cache, cacheKey, setScreenshots(sheet, data));
     if (data.action === 'clearCells')    return clearCells(sheet, data);
     if (data.action === 'setCells')      return setCells(sheet, data);
+    if (data.action === 'addAccount')    return remember(cache, cacheKey, addAccount(sheet, data));
     if (data.action === 'addResult1hColumn') return addResult1hColumn(ss, sheet);
     if (data.action === 'addArgumentsColumn') return addArgumentsColumn(ss, sheet);
     if (data.action === 'setTimezone') {
@@ -267,6 +268,42 @@ function addResult1hColumn(ss, sheet) {
 // Точечно вписать значения: { row: 54, values: { AE: -981 } }. Нужно, когда в сумме
 // ошибся человек, а не бот: % и RR — формулы, они пересчитаются сами.
 // Формулы не принимаем: чинить данные и чинить расчёт — разные вещи.
+// Дописать проп в уже открытую сделку: вошёл сначала на одном счёте, через
+// пять минут добрал на другом. Пишем только риск — доллары останутся пустыми,
+// и проп считается открытым, как при обычном входе.
+function addAccount(sheet, data) {
+  var row = Number(data.row);
+  if (!row || row < 2 || row > sheet.getLastRow()) return createResponse(false, 'bad row');
+
+  var idx = propIndexByName(data.name);
+  if (idx === -1) return createResponse(false, 'Неизвестный проп: ' + data.name);
+
+  var risk = toNumber(data.risk);
+  if (risk === null || risk <= 0) return createResponse(false, 'Некорректный риск: ' + data.risk);
+
+  var c = propCols(idx);
+  var was = sheet.getRange(row, c.risk).getValue();
+  if (!isEmpty(was)) {
+    return createResponse(false, PROPS[idx] + ' уже стоит в этой сделке (риск ' + was + '%)');
+  }
+
+  sheet.getRange(row, c.risk).setValue(risk);
+
+  // колонка «Аккаунты» — текстовый список, дописываем туда же
+  var listCell = sheet.getRange(row, COL_ACCOUNT_OLD);
+  var list = String(listCell.getValue() || '').split(',').map(function (x) { return x.trim(); })
+    .filter(function (x) { return x; });
+  if (list.indexOf(PROPS[idx]) === -1) list.push(PROPS[idx]);
+  listCell.setValue(list.join(', '));
+
+  applyRowFormulas(sheet, row);
+
+  return createResponse(true, 'account added', {
+    row: row, name: PROPS[idx], risk: risk,
+    pair: String(sheet.getRange(row, 4).getValue()), accounts: list
+  });
+}
+
 function setCells(sheet, data) {
   var row = String(data.row) === 'last' ? sheet.getLastRow() : Number(data.row);
   if (!row || row < 2 || row > sheet.getLastRow()) return createResponse(false, 'bad row');
