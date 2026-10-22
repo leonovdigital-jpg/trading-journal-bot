@@ -924,6 +924,7 @@ bot.start((ctx) => {
 // Дублёр кнопки: ВХОД — reply-клавиатура, её Telegram иногда сворачивает в иконку.
 // Команда всегда доступна из синего меню рядом с полем ввода.
 bot.command('vhod', async (ctx) => { await startEntry(ctx); });
+bot.command('dobor', async (ctx) => { await startAddAccount(ctx); });
 bot.command('vxod', async (ctx) => { await startEntry(ctx); });
 
 bot.command('reset', async (ctx) => {
@@ -1612,6 +1613,7 @@ if (require.main === module) app.listen(PORT, async () => {
   // Список команд в синем меню рядом с полем ввода — вход должен быть первым.
   bot.telegram.setMyCommands([
     { command: 'vhod', description: '🧨 Начать вход в сделку' },
+    { command: 'dobor', description: '➕ Добавить аккаунт в открытую сделку' },
     { command: 'closetrade', description: 'Закрыть сделку' },
     { command: 'stats', description: 'Балансы и месяц по пропам' },
     { command: 'balance', description: 'Поправить баланс пропа' },
