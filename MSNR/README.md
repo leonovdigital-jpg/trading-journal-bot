@@ -9,9 +9,10 @@ https://claude.ai/artifact/WCvMwxKriTHKqrqbPKx9dr
 
 Видео перетащить в VS Code в папку `MSNR/materials/` (или прислать ссылку). Дальше:
 
-    python3 MSNR/tools/video_notes.py MSNR/materials/<видео>.mp4
+    python3 ~/tools/video-notes/video_notes.py transcript MSNR/materials/<видео>.mp4
+    python3 ~/tools/video-notes/video_notes.py summary <ссылка|файл> MSNR/materials
 
-Результат — `MSNR/materials/<видео>/transcript.md`: дословная расшифровка Gemini с таймкодами
-и ссылками на кадры экрана (`frames/`). Ключ — `GEMINI_API_KEY` в `Trading/.env`, бесплатный тариф
-(Pro-модели на нём закрыты, работают Flash; скрипт перебирает несколько и повторяет при перегрузке).
+`transcript` — дословная расшифровка с таймкодами и кадрами экрана (`<видео>/transcript.md`, `frames/`);
+`summary` — конспект. Инструмент общий (им же пользуется чат «🎬 Конспект видео» в Telegram),
+ключ — `GEMINI_API_KEY` в `~/tools/video-notes/.env`, бесплатный тариф.
 В git попадают только расшифровки: видео, звук и кадры исключены в `.gitignore`.
