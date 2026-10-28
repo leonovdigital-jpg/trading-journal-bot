@@ -1,0 +1,8 @@
+# Видео, звук и кадры курса — тяжёлые и платный контент; в git только расшифровки.
+materials/**/*.mp4
+materials/**/*.mov
+materials/**/*.mkv
+materials/**/*.webm
+materials/**/*.m4a
+materials/*/chunks/
+materials/*/frames/
