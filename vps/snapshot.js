@@ -24,6 +24,53 @@ const SPAN_AFTER_RESET_H = 14.1;
 const ZOOM_RATIO = 1.109;
 const TARGET_SPAN_H = 8.4;        // влезает в сегодня при любом входе начиная с 09:00
 
+// Начало сегодняшних суток по Минску в unix-секундах. Минск часы не переводит,
+// поэтому смещение всегда +3.
+function minskMidnightUnix(now = new Date()) {
+  const p = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Minsk", year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(now);
+  const get = t => Number(p.find(x => x.type === t).value);
+  return Date.UTC(get("year"), get("month") - 1, get("day")) / 1000 - 3 * 3600;
+}
+
+// setVisibleRange в этой сборке TradingView бросает «Not implemented», а вот
+// getVisibleRange работает — и этого достаточно: зумим колесом и ПРОВЕРЯЕМ по факту,
+// пока левый край не окажется внутри сегодняшних суток. Раньше число щелчков
+// считалось от замера на USDCHF, и на UK100 с ночными перерывами в кадр лез
+// вчерашний вечер: те же свечи растягиваются на большее время.
+async function visibleRange(page) {
+  return page.evaluate(() => {
+    try {
+      const ch = window.TradingViewApi && window.TradingViewApi.activeChart && window.TradingViewApi.activeChart();
+      const r = ch && ch.getVisibleRange && ch.getVisibleRange();
+      return r && r.from ? { from: r.from, to: r.to } : null;
+    } catch (e) { return null; }
+  });
+}
+
+async function zoomToToday(page, box, y) {
+  const todayStart = minskMidnightUnix();
+  const zx = box.x + box.width * 0.92;        // зумим у правого края — последние бары на месте
+
+  for (let round = 0; round < 6; round++) {
+    const r = await visibleRange(page);
+    if (!r) return false;                      // API нет — пусть сработает запасной путь
+    if (r.from >= todayStart) return true;
+
+    const need = (r.to - r.from) / Math.max(1, r.to - todayStart);
+    const steps = Math.min(25, Math.max(1, Math.ceil(Math.log(need) / Math.log(ZOOM_RATIO))));
+    for (let i = 0; i < steps; i++) {
+      await page.mouse.move(zx, y);
+      await page.mouse.wheel(0, -120);
+      await page.waitForTimeout(120);
+    }
+    await page.waitForTimeout(700);
+  }
+  return true;                                 // ближе уже не подобраться, оставляем как есть
+}
+
+// Запасной путь, если внутреннего API не окажется: подбор колесом.
 // Сколько щелчков колеса нужно, чтобы в кадр не попал вчерашний день.
 function zoomStepsForToday(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -91,6 +138,57 @@ async function setInterval_(page, pane, key) {
   await page.waitForTimeout(2500);
 }
 
+// Индикаторы, которые надо прятать перед съёмкой. MSNR рисует уровни на сотни
+// пунктов выше и ниже цены; автомасштаб растягивает шкалу на них, и свечи на
+// 5-минутке превращаются в полоску (02.11 так уехал скрин в журнале).
+// Индикатор живёт на графике, а не на символе, поэтому тянется за всеми парами.
+const HIDE_INDICATORS = (process.env.HIDE_INDICATORS || "MSNR")
+  .split(",").map(x => x.trim()).filter(Boolean);
+
+// Строку легенды ищем по началу названия: классы у TradingView меняются от сборки
+// к сборке, а подпись — нет.
+async function legendRowRect(page, prefix) {
+  return page.evaluate(name => {
+    const titles = [...document.querySelectorAll("div")].filter(el =>
+      el.children.length === 0 && (el.textContent || "").trim().startsWith(name));
+    let row = titles[0];
+    while (row && !(row.className || "").toString().includes("item-")) row = row.parentElement;
+    if (!row) return null;
+    const r = row.getBoundingClientRect();
+    return { x: r.x, y: r.y, h: r.height };
+  }, prefix);
+}
+
+// visible=false — жмём «Hide», true — «Show». Кнопки появляются только при наведении.
+async function setIndicator(page, prefix, visible) {
+  const rect = await legendRowRect(page, prefix);
+  if (!rect) return false;
+
+  await page.mouse.move(rect.x + 20, rect.y + rect.h / 2);
+  await page.waitForTimeout(500);
+
+  const want = visible ? /^(Show|Показать)$/ : /^(Hide|Скрыть)$/;
+  const btn = await page.evaluate(({ name, pattern }) => {
+    const re = new RegExp(pattern);
+    const titles = [...document.querySelectorAll("div")].filter(el =>
+      el.children.length === 0 && (el.textContent || "").trim().startsWith(name));
+    let row = titles[0];
+    while (row && !(row.className || "").toString().includes("item-")) row = row.parentElement;
+    if (!row) return null;
+    for (const x of row.querySelectorAll("[aria-label],[title]")) {
+      const label = x.getAttribute("aria-label") || x.getAttribute("title") || "";
+      const r = x.getBoundingClientRect();
+      if (re.test(label.trim()) && r.width > 0) return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    }
+    return null;
+  }, { name: prefix, pattern: want.source });
+
+  if (!btn) return false;                      // уже в нужном состоянии
+  await page.mouse.click(btn.x, btn.y);
+  await page.waitForTimeout(800);
+  return true;
+}
+
 // Проверка, что сессия жива: у гостя TradingView рисует кнопку входа.
 async function isLoggedIn(page) {
   return (await page.locator("#header-toolbar-symbol-search").count()) > 0
@@ -115,6 +213,18 @@ async function takeSnapshots(symbols, opts = {}) {
   const y = box.y + box.height * 0.5;
   const out = {};
 
+  // Прячем мешающие индикаторы на время съёмки и возвращаем их в finally,
+  // чтобы график пользователя не остался без них из-за ошибки посреди работы.
+  const hidden = [];
+  for (const name of HIDE_INDICATORS) {
+    if (await setIndicator(page, name, false).catch(() => false)) hidden.push(name);
+  }
+  if (hidden.length) {
+    await page.keyboard.press("Alt+r").catch(() => {});   // пересобрать масштаб уже без них
+    await page.waitForTimeout(1200);
+  }
+
+  try {
   for (const symbol of symbols) {
     await setSymbol(page, symbol);
 
@@ -127,14 +237,17 @@ async function takeSnapshots(symbols, opts = {}) {
       await page.waitForTimeout(2500);             // даём разметке дорисоваться
 
       if (name === "5m" && opts.todayOnly) {
-        const steps = zoomStepsForToday();
-        const zx = box.x + box.width * 0.92;       // зумим у правого края — последние бары на месте
-        for (let i = 0; i < steps; i++) {
-          await page.mouse.move(zx, y);
-          await page.mouse.wheel(0, -120);
-          await page.waitForTimeout(150);
+        const byApi = await zoomToToday(page, box, y).catch(() => false);
+        if (!byApi) {
+          const steps = zoomStepsForToday();     // без API — старый подбор на глаз
+          const zx = box.x + box.width * 0.92;
+          for (let i = 0; i < steps; i++) {
+            await page.mouse.move(zx, y);
+            await page.mouse.wheel(0, -120);
+            await page.waitForTimeout(150);
+          }
         }
-        await page.waitForTimeout(1500);
+        await page.waitForTimeout(1200);
       }
 
       const x0 = box.x + box.width * 0.85, x1 = x0 - box.width * OFFSET;
@@ -174,6 +287,12 @@ async function takeSnapshots(symbols, opts = {}) {
   }
 
   return out;
+
+  } finally {
+    for (const name of hidden) {
+      await setIndicator(page, name, true).catch(() => {});
+    }
+  }
 }
 
 module.exports = { takeSnapshots, getPage, isLoggedIn };
