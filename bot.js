@@ -650,7 +650,7 @@ function sessionKeyboard() {
 // незаконченный опрос и начинает заново.
 const ENTRY_BUTTON = 'ВХОД';
 const AGAINST_QUESTION = '🧨🧨 Аргументы против?';
-const ASSETS = ['UK100', 'USDCHF', 'US30'];
+const ASSETS = (process.env.ASSETS || 'UK100,USDCHF,US30,XAUUSD').split(',').map(x => x.trim()).filter(Boolean);
 // Скрин входа бот снимает сам: 5 минут (в пределах сегодняшнего дня), 1h, 4h, 1d.
 // У DXY пятиминутка не нужна — в журнале под него только три колонки.
 const ENTRY_TFS = ['5m', '1h', '4h', '1d'];
