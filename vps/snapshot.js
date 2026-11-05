@@ -16,6 +16,13 @@ const OFFSET = 0.15;                                   // сдвиг графи�
 const TF_KEYS = { "5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "1D" };
 const DEFAULT_TFS = ["1h", "4h", "1d"];
 
+// Кадр старших таймфреймов (1 час и выше): свечи крупнее и справа остаётся пустое
+// поле — там пользователь смотрит, куда цена пойдёт дальше, и туда же уезжают
+// подписи уровней, которые иначе наползают на правый край.
+const HTF_BAR_SCALE = 1.4;        // свечи крупнее на 40%
+const HTF_RIGHT_PCT = 0.25;       // четверть кадра справа — пустая
+const LTF_RIGHT_PCT = OFFSET;     // на 5 минутах оставляем как было
+
 // Скрин входа на 5 минутах не должен захватывать прошлые дни — только сегодняшний.
 // После Alt+R в кадре ровно 14.1 часа (замерено 13.10: Alt+R сбрасывает и масштаб,
 // поэтому величина стабильна и зум не накапливается на графике пользователя).
@@ -68,6 +75,30 @@ async function zoomToToday(page, box, y) {
     await page.waitForTimeout(700);
   }
   return true;                                 // ближе уже не подобраться, оставляем как есть
+}
+
+// Ширина свечей и пустое поле справа — через шкалу времени TradingView.
+// Раньше поле справа добивалось протяжкой мыши по графику: это и неточно, и опасно —
+// нажатие приходилось на область с разметкой пользователя и могло утащить линию.
+// getTimeScale() даёт barSpacing/setBarSpacing и rightOffset/setRightOffset напрямую.
+// Alt+R перед следующим кадром сбрасывает и то и другое, так что на графике
+// пользователя ничего не накапливается.
+async function frameChart(page, barScale, rightPct) {
+  return page.evaluate(({ scale, pct }) => {
+    try {
+      const ch = window.TradingViewApi && window.TradingViewApi.activeChart && window.TradingViewApi.activeChart();
+      const ts = ch && ch.getTimeScale && ch.getTimeScale();
+      if (!ts || !ts.setBarSpacing || !ts.setRightOffset) return false;
+
+      if (scale && scale !== 1) ts.setBarSpacing(ts.barSpacing() * scale);
+
+      const spacing = ts.barSpacing();
+      const width = ts.width();
+      if (!spacing || !width) return false;
+      ts.setRightOffset(Math.round((width / spacing) * pct));
+      return true;
+    } catch (e) { return false; }
+  }, { scale: barScale, pct: rightPct });
 }
 
 // Запасной путь, если внутреннего API не окажется: подбор колесом.
@@ -250,12 +281,18 @@ async function takeSnapshots(symbols, opts = {}) {
         await page.waitForTimeout(1200);
       }
 
-      const x0 = box.x + box.width * 0.85, x1 = x0 - box.width * OFFSET;
-      await page.mouse.move(x0, y);
-      await page.mouse.down();
-      for (let i = 1; i <= 10; i++) { await page.mouse.move(x0 + (x1 - x0) * i / 10, y); await page.waitForTimeout(30); }
-      await page.mouse.up();
-      await page.waitForTimeout(1000);
+      const htf = name !== "5m" && name !== "15m";
+      const framed = await frameChart(page, htf ? HTF_BAR_SCALE : 1, htf ? HTF_RIGHT_PCT : LTF_RIGHT_PCT)
+        .catch(() => false);
+
+      if (!framed) {                               // API нет — старая протяжка мышью
+        const x0 = box.x + box.width * 0.85, x1 = x0 - box.width * OFFSET;
+        await page.mouse.move(x0, y);
+        await page.mouse.down();
+        for (let i = 1; i <= 10; i++) { await page.mouse.move(x0 + (x1 - x0) * i / 10, y); await page.waitForTimeout(30); }
+        await page.mouse.up();
+      }
+      await page.waitForTimeout(1200);
 
       const respP = page.waitForResponse(r => r.url().includes("/snapshot/") && r.request().method() === "POST", { timeout: 25000 });
       await page.locator("#header-toolbar-screenshot").click();
