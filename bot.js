@@ -106,8 +106,13 @@ async function fetchEcho(location, attempts = 6) {
   throw new Error('echo not ready: ' + last);
 }
 
+// Веб-приложение таблицы отвечает анонимным запросам — иначе бот не смог бы писать
+// без входа в гугл, — поэтому каждый запрос несёт общий ключ из .env.
+const SHEETS_KEY = process.env.SHEETS_KEY || '';
+
 async function sheetsPost(payload, attempts = 3) {
   let lastError = null;
+  if (SHEETS_KEY) payload = Object.assign({ key: SHEETS_KEY }, payload);
 
   for (let i = 1; i <= attempts; i++) {
     try {
@@ -218,9 +223,12 @@ async function symbolFromLink(link) {
 
 // Возвращает промис с шестью ссылками. Запускается сразу, как пришла ссылка, и «доспевает»,
 // пока пользователь отвечает на вопросы, — к моменту записи скрины обычно уже готовы.
+// Возвращает ссылки по таймфреймам. План сделки, прочитанный с графика, кладём
+// туда же под ключом __position: все, кто читает ссылки, спрашивают их по имени
+// таймфрейма, а двойное подчёркивание сразу говорит, что это не ссылка.
 function requestSnapshots(symbol, opts = {}) {
   return axios.post(`${WORKER_URL}/snapshots`, Object.assign({ symbol }, opts), { timeout: 240000 })
-    .then(r => r.data.links)
+    .then(r => Object.assign({ __position: r.data.position || null }, r.data.links))
     .catch(err => {
       const reason = (err.response && err.response.data && err.response.data.error) || err.message;
       throw new Error(reason);
@@ -543,7 +551,10 @@ async function uploadToGoogleSheets(trade, links) {
       screenshot1d: links[3] || '',
       dxySmt1: links[4] || '',
       dxySmt4: links[5] || '',
-      dxySmt1d: links[6] || ''
+      dxySmt1d: links[6] || '',
+      // План сделки, прочитанный с инструмента позиции на графике. Без него
+      // «сколько упустил, выйдя раньше» остаётся прикидкой по картинке.
+      plan: trade.plan || null
     };
 
     const reply = await sheetsPost(payload);
@@ -815,6 +826,7 @@ async function saveNewTrade(ctx, state) {
   // Ссылок от пользователя больше нет — всё снимает бот. Если съёмка упала,
   // сделка всё равно записывается, а скрины досылаются потом.
   let links = [];
+  let position = null;
   let snapshotError = null;
 
   // Скрины снимаются параллельно опросу; здесь просто забираем результат.
@@ -825,6 +837,7 @@ async function saveNewTrade(ctx, state) {
     try {
       const s = await state.snapshots;
       links = [s['5m'], s['1h'], s['4h'], s['1d'], s.dxy1h, s.dxy4h, s.dxy1d];
+      position = s.__position;
     } catch (error) {
       snapshotError = error.message;
       console.error('Snapshots failed:', snapshotError);
@@ -842,7 +855,8 @@ async function saveNewTrade(ctx, state) {
     pair: state.asset,
     against: state.against,
     grade: state.grade,
-    accounts: state.accSelected.map(name => ({ name: name, risk: state.accRisks[name] }))
+    accounts: state.accSelected.map(name => ({ name: name, risk: state.accRisks[name] })),
+    plan: position
   };
 
   const result = await uploadToGoogleSheets(sheetData, links);

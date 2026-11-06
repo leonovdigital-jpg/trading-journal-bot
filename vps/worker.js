@@ -78,8 +78,9 @@ app.post("/snapshots", async (req, res) => {
       if (dxy) dxyTfs.forEach(function (tf) { links["dxy" + tf] = raw[dxy + " " + tf]; });
       const missing = Object.entries(links).filter(([, v]) => !v).map(([k]) => k);
       if (missing.length) throw new Error("не снялось: " + missing.join(", "));
-      console.log(`готово за ${((Date.now() - started) / 1000).toFixed(0)} с`);
-      res.json({ links, seconds: Math.round((Date.now() - started) / 1000) });
+      console.log(`готово за ${((Date.now() - started) / 1000).toFixed(0)} с`
+        + (raw.position ? `, план: ${raw.position.kind} ${raw.position.entry} → ${raw.position.target} (RR ${raw.position.rr})` : ", плана на графике нет"));
+      res.json({ links, position: raw.position || null, seconds: Math.round((Date.now() - started) / 1000) });
     } catch (e) {
       const msg = e.message.split("\n")[0];
       console.error("ошибка:", msg);

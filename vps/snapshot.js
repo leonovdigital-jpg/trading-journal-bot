@@ -220,6 +220,60 @@ async function setIndicator(page, prefix, visible) {
   return true;
 }
 
+// Уровни сделки с графика. На графике нарисован инструмент позиции (long_position
+// или short_position) — в нём и лежит план: цена входа в первой точке, а стоп и
+// цель заданы в тиках от неё. Журнал раньше хранил только результат в R, поэтому
+// на вопрос «сколько я упустил, выйдя раньше» ответить было нечем: расстояние до
+// стопа и цели в ценах нигде не записывалось.
+//
+// Размер тика берём из форматировщика цен самого графика: он печатает цену с тем
+// числом знаков, с каким торгуется инструмент (USDCHF — пять, золото — два).
+async function readPosition(page) {
+  return page.evaluate(() => {
+    try {
+      const chart = window.TradingViewApi && window.TradingViewApi.activeChart && window.TradingViewApi.activeChart();
+      if (!chart || !chart.getAllShapes) return null;
+
+      const tools = (chart.getAllShapes() || [])
+        .filter(s => s.name === "long_position" || s.name === "short_position");
+      if (!tools.length) return null;
+
+      let tick = 0.01;
+      try {
+        const sample = chart.priceFormatter().format(1.23456789);
+        const dot = sample.indexOf(".");
+        tick = dot === -1 ? 1 : Math.pow(10, -(sample.length - dot - 1));
+      } catch (e) { /* остаёмся на 0.01 */ }
+
+      // Инструментов может быть несколько: старый план мог остаться на графике.
+      // Берём самый поздний по времени точки входа.
+      let best = null;
+      for (const tool of tools) {
+        const api = chart.getShapeById(tool.id);
+        const points = (api.getPoints && api.getPoints()) || [];
+        const props = (api.getProperties && api.getProperties()) || {};
+        const entry = points[0] && points[0].price;
+        const time = (points[0] && points[0].time) || 0;
+        if (!entry || !props.stopLevel || !props.profitLevel) continue;
+        if (best && time <= best.time) continue;
+
+        const long = tool.name === "long_position";
+        const sign = long ? 1 : -1;
+        best = {
+          kind: long ? "long" : "short",
+          entry: entry,
+          stop: entry - sign * props.stopLevel * tick,
+          target: entry + sign * props.profitLevel * tick,
+          rr: Math.round((props.profitLevel / props.stopLevel) * 100) / 100,
+          time: time,
+          tick: tick
+        };
+      }
+      return best;
+    } catch (e) { return null; }
+  });
+}
+
 // Проверка, что сессия жива: у гостя TradingView рисует кнопку входа.
 async function isLoggedIn(page) {
   return (await page.locator("#header-toolbar-symbol-search").count()) > 0
@@ -258,6 +312,11 @@ async function takeSnapshots(symbols, opts = {}) {
   try {
   for (const symbol of symbols) {
     await setSymbol(page, symbol);
+
+    // План сделки читаем только по основному инструменту: на DXY позиции нет.
+    if (symbol === symbols[0]) {
+      out.position = await readPosition(page).catch(() => null);
+    }
 
     // У DXY свой набор таймфреймов: 5-минутка индекса в журнале не нужна.
     const symbolTfs = (opts.tfsBySymbol && opts.tfsBySymbol[symbol]) || tfs;

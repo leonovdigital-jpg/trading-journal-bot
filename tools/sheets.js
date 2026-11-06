@@ -12,6 +12,16 @@
 const URL_EXEC = process.env.APPS_SCRIPT_URL
   || 'https://script.google.com/macros/s/AKfycbyrKuqc4_RwXsu2y_kCZVLbD6BUFMnqyzuokQun-4J13aWQlc96pgME2Ai3vef_oYVhQw/exec';
 
+// Общий ключ: веб-приложение отвечает анонимным запросам, а его адрес публичен.
+// Берём из SHEETS_KEY, а если его нет — из .env рядом с проектом.
+const SHEETS_KEY = process.env.SHEETS_KEY || (() => {
+  try {
+    const text = require('fs').readFileSync(__dirname + '/../.env', 'utf8');
+    const line = text.split('\n').find(l => l.startsWith('SHEETS_KEY='));
+    return line ? line.slice('SHEETS_KEY='.length).trim().replace(/^["']|["']$/g, '') : '';
+  } catch (e) { return ''; }
+})();
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function echo(location, attempts = 8) {
@@ -31,6 +41,7 @@ async function echo(location, attempts = 8) {
 
 async function post(payload, attempts = 3) {
   let last = null;
+  if (SHEETS_KEY) payload = Object.assign({ key: SHEETS_KEY }, payload);
   for (let i = 1; i <= attempts; i++) {
     try {
       const r = await fetch(URL_EXEC, {

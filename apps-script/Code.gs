@@ -25,6 +25,13 @@ var COL_RESULT_1H  = 20;   // T — скрин закрытия, 1 час
 var COL_GRADE      = 21;   // U — класс позиции (A / A (-) / B / C)
 var COL_ACCOUNT_OLD = 22;  // V — аккаунт (историческое)
 
+// План сделки, снятый с инструмента позиции на графике в момент входа.
+// Колонки добавлены в конец, за служебными моментами закрытия: вставка в середину
+// сдвинула бы весь блок пропов с формулами и историей, а выгоды от соседства с
+// оценкой на это не хватает.
+var PLAN_FIELDS = ['Сторона', 'Вход', 'Стоп', 'Цель', 'RR плана'];
+function planCol(k) { return lastDataCol() + 1 + k; }
+
 var PROPS_SHEET = 'Props';
 var STATS_SHEET = 'Статистика';
 var PROPS_MAX_ROW = 50;
@@ -106,6 +113,38 @@ function toNumber(value) {
   return isNaN(n) ? null : n;
 }
 
+// Сравнение, не зависящее от длины совпавшего начала: подбирать ключ по времени
+// ответа не выйдет.
+function sameKey(a, b) {
+  if (a.length !== b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// null — запрос можно выполнять; иначе готовый отказ.
+function checkKey(data) {
+  var expected = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  if (!expected) return null;                       // ключ ещё не заведён — работаем как раньше
+  if (sameKey(String(data.key || ''), expected)) return null;
+  return createResponse(false, 'нужен ключ');
+}
+
+// Запись секрета в свойства скрипта. Адрес /exec публичен, поэтому менять ключ
+// можно только зная идентификатор самой таблицы — он есть лишь у того, у кого
+// есть доступ к ней.
+function setSecret(ss, data) {
+  if (String(data.confirm || '') !== ss.getId()) {
+    return createResponse(false, 'нужен confirm с идентификатором таблицы');
+  }
+  var name = String(data.name || '');
+  if (['API_KEY'].indexOf(name) === -1) {
+    return createResponse(false, 'такое свойство менять нельзя');
+  }
+  PropertiesService.getScriptProperties().setProperty(name, String(data.value || ''));
+  return createResponse(true, 'записано: ' + name);
+}
+
 /*** Роутер ***/
 
 function doPost(e) {
@@ -114,6 +153,17 @@ function doPost(e) {
 
     var data = JSON.parse(e.postData.contents);
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // Веб-приложение открыто для анонимных запросов — иначе бот не смог бы писать
+    // без входа в гугл. Адрес /exec лежал в публичном репозитории, то есть журнал
+    // мог читать и править кто угодно. Теперь каждый запрос несёт общий ключ.
+    // setSecret — единственное исключение: им ключ и заводится, и он защищён
+    // идентификатором таблицы, который знает только владелец.
+    if (data.action !== 'setSecret') {
+      var guard = checkKey(data);
+      if (guard) return guard;
+    }
+
     var sheet = getTradesSheet(ss);
     detectArgSep(ss);
 
@@ -149,6 +199,7 @@ function doPost(e) {
     if (data.action === 'setup')         return runSetup(ss, sheet);
     if (data.action === 'dump')          return dumpSheet(sheet, data);
     if (data.action === 'weekly')        return weeklyTrades(ss, sheet, data);
+    if (data.action === 'setSecret')     return setSecret(ss, data);
     if (data.action === 'saveReport')    return remember(cache, cacheKey, saveReport(ss, data));
     if (data.action === 'pendingReports') return pendingReports(ss);
     if (data.action === 'markReportSent') return markReportSent(ss, data);
@@ -512,6 +563,15 @@ function weeklyTrades(ss, sheet, data) {
         dxyD1: String(row[COL_SHOT_1H + 4] || ''),
         close5m: String(row[COL_RESULT - 1] || ''),
         close1h: String(row[COL_RESULT_1H - 1] || '')
+      },
+      // План с графика. Есть только у сделок с 06.11.2026 — раньше уровни нигде
+      // не записывались, поэтому у старых строк тут пусто.
+      plan: isEmpty(row[planCol(0) - 1]) ? null : {
+        side: String(row[planCol(0) - 1]),
+        entry: toNumber(row[planCol(1) - 1]),
+        stop: toNumber(row[planCol(2) - 1]),
+        target: toNumber(row[planCol(3) - 1]),
+        rr: toNumber(row[planCol(4) - 1])
       },
       accounts: accounts,
       totalUsd: toNumber(row[totalUsdCol() - 1]),
@@ -932,6 +992,23 @@ function totalFormula(row) {
   return loc('=IF(COUNT(' + refs + ')=0,"",SUM(' + refs + '))');
 }
 
+// План сделки: сторона, вход, стоп, цель и RR. Плана может не быть — инструмент
+// позиции на графике не нарисован, — тогда просто ничего не пишем.
+function writePlan(sheet, row, plan) {
+  if (!plan || !plan.entry) return false;
+
+  ensureColumns(sheet, planCol(PLAN_FIELDS.length - 1));
+  sheet.getRange(1, planCol(0), 1, PLAN_FIELDS.length).setValues([PLAN_FIELDS]).setFontWeight('bold');
+  sheet.getRange(row, planCol(0), 1, PLAN_FIELDS.length).setValues([[
+    plan.kind === 'short' ? 'Short' : 'Long',
+    toNumber(plan.entry),
+    toNumber(plan.stop),
+    toNumber(plan.target),
+    toNumber(plan.rr)
+  ]]);
+  return true;
+}
+
 function applyRowFormulas(sheet, row) {
   for (var i = 0; i < PROPS.length; i++) {
     var c = propCols(i);
@@ -1051,6 +1128,7 @@ function addNewTrade(sheet, data) {
     sheet.getRange(lastRow, COL_ACCOUNT_OLD).setValue(written.join(', '));
   }
 
+  writePlan(sheet, lastRow, data.plan);
   applyRowFormulas(sheet, lastRow);
 
   return createResponse(true, 'Trade added', { row: lastRow, accounts: written });
