@@ -148,6 +148,10 @@ function doPost(e) {
     if (data.action === 'updateTrade')   return remember(cache, cacheKey, updateTradeResult(sheet, data));
     if (data.action === 'setup')         return runSetup(ss, sheet);
     if (data.action === 'dump')          return dumpSheet(sheet, data);
+    if (data.action === 'weekly')        return weeklyTrades(ss, sheet, data);
+    if (data.action === 'saveReport')    return remember(cache, cacheKey, saveReport(ss, data));
+    if (data.action === 'pendingReports') return pendingReports(ss);
+    if (data.action === 'markReportSent') return markReportSent(ss, data);
     if (data.action === 'headers')       { buildHeaders(sheet); return createResponse(true, 'headers rebuilt'); }
     if (data.action === 'ping') {
       // sizes — размер аккаунта из Props на сейчас: бот пересчитывает риск $ → %
@@ -414,6 +418,173 @@ function dumpSheet(sheet, data) {
     sheets: sheet.getParent().getSheets().map(function (s) { return s.getName(); }),
     rows: out
   });
+}
+
+/*** Выгрузка недели для аналитики ***/
+
+// Еженедельный разбор журнала запускается в облаке Claude и ничего не знает ни о
+// форме таблицы, ни о порядке колонок. Поэтому разбирает строки не он, а скрипт:
+// отдаём готовые объекты, которые остаются верными после любой миграции колонок.
+//
+//   {"action":"weekly"}                     — последние 7 суток
+//   {"action":"weekly","days":14}           — последние 14
+//   {"action":"weekly","from":"2026-11-01","to":"2026-11-08"}
+function weeklyTrades(ss, sheet, data) {
+  var tz = ss.getSpreadsheetTimeZone();
+  var values = sheet.getDataRange().getValues();
+
+  var to = data.to ? new Date(String(data.to) + 'T23:59:59') : new Date();
+  var from;
+  if (data.from) {
+    from = new Date(String(data.from) + 'T00:00:00');
+  } else {
+    var days = Number(data.days || 7);
+    from = new Date(to.getTime() - days * 24 * 3600 * 1000);
+  }
+
+  var trades = [];
+
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    if (isEmpty(row[3])) continue;                  // нет пары — строка не сделка
+
+    var opened = row[0];
+    if (!(opened instanceof Date)) continue;
+    if (opened < from || opened > to) continue;
+
+    var accounts = [];
+    var closes = [];
+
+    for (var p = 0; p < PROPS.length; p++) {
+      var c = propCols(p);
+      var risk = toNumber(row[c.risk - 1]);
+      if (risk === null) continue;                  // на этом пропе не входил
+
+      var closedAt = row[closeCol(p) - 1];
+      var closed = closedAt instanceof Date ? closedAt : null;
+      if (closed) closes.push(closed);
+
+      accounts.push({
+        prop: PROPS[p],
+        riskPct: risk,
+        usd: toNumber(row[c.usd - 1]),
+        pct: toNumber(row[c.pct - 1]),
+        rr: toNumber(row[c.rr - 1]),
+        closedAt: closed ? Utilities.formatDate(closed, tz, "yyyy-MM-dd'T'HH:mm:ss") : null,
+        holdMin: closed ? Math.round((closed.getTime() - opened.getTime()) / 60000) : null
+      });
+    }
+
+    // R сделки — среднее по пропам: риск в процентах у них разный, а R общий.
+    var rrs = [];
+    for (var a = 0; a < accounts.length; a++) {
+      if (accounts[a].rr !== null) rrs.push(accounts[a].rr);
+    }
+    var rrAvg = null;
+    if (rrs.length) {
+      var sum = 0;
+      for (var k = 0; k < rrs.length; k++) sum += rrs[k];
+      rrAvg = Math.round((sum / rrs.length) * 1000) / 1000;
+    }
+
+    var firstClose = null;
+    for (var z = 0; z < closes.length; z++) {
+      if (!firstClose || closes[z] < firstClose) firstClose = closes[z];
+    }
+
+    trades.push({
+      row: i + 1,
+      openedAt: Utilities.formatDate(opened, tz, "yyyy-MM-dd'T'HH:mm:ss"),
+      day: String(row[1] || ''),
+      session: String(row[2] || ''),
+      pair: String(row[3]),
+      thoughts: String(row[4] || ''),
+      against: String(row[COL_AGAINST - 1] || ''),
+      notes: String(row[COL_ERRORS - 1] || ''),
+      grade: String(row[COL_GRADE - 1] || ''),
+      shots: {
+        m5: String(row[COL_SHOT_5M - 1] || ''),
+        h1: String(row[COL_SHOT_1H - 1] || ''),
+        h4: String(row[COL_SHOT_1H] || ''),
+        d1: String(row[COL_SHOT_1H + 1] || ''),
+        dxyH1: String(row[COL_SHOT_1H + 2] || ''),
+        dxyH4: String(row[COL_SHOT_1H + 3] || ''),
+        dxyD1: String(row[COL_SHOT_1H + 4] || ''),
+        close5m: String(row[COL_RESULT - 1] || ''),
+        close1h: String(row[COL_RESULT_1H - 1] || '')
+      },
+      accounts: accounts,
+      totalUsd: toNumber(row[totalUsdCol() - 1]),
+      rr: rrAvg,
+      closedAt: firstClose ? Utilities.formatDate(firstClose, tz, "yyyy-MM-dd'T'HH:mm:ss") : null,
+      holdMin: firstClose ? Math.round((firstClose.getTime() - opened.getTime()) / 60000) : null,
+      open: closes.length < accounts.length
+    });
+  }
+
+  return createResponse(true, 'weekly', {
+    from: Utilities.formatDate(from, tz, 'yyyy-MM-dd HH:mm'),
+    to: Utilities.formatDate(to, tz, 'yyyy-MM-dd HH:mm'),
+    timezone: tz,
+    props: PROPS,
+    count: trades.length,
+    trades: trades
+  });
+}
+
+/*** Почтовый ящик отчётов ***/
+
+// Аналитика считается в облаке Claude, а доставляет её в телеграм бот на сервере:
+// сам скрипт в интернет ходить не может — для UrlFetchApp нужна авторизация
+// владельца через браузер, а лишних кликов в этой системе быть не должно.
+// Поэтому облако кладёт отчёт сюда, а бот забирает его и отмечает отправленным.
+var REPORTS_SHEET = 'Аналитика';
+
+function ensureReportsSheet(ss) {
+  var sheet = ss.getSheetByName(REPORTS_SHEET);
+  if (sheet) return sheet;
+
+  sheet = ss.insertSheet(REPORTS_SHEET);
+  sheet.getRange(1, 1, 1, 5)
+    .setValues([['Создан', 'Период с', 'Период по', 'Отчёт', 'Отправлен']])
+    .setFontWeight('bold');
+  sheet.setColumnWidth(4, 700);
+  sheet.setFrozenRows(1);
+  return sheet;
+}
+
+function saveReport(ss, data) {
+  var text = String(data.text || '').trim();
+  if (!text) return createResponse(false, 'пустой отчёт');
+
+  var sheet = ensureReportsSheet(ss);
+  sheet.appendRow([new Date(), String(data.from || ''), String(data.to || ''), text, '']);
+  var row = sheet.getLastRow();
+  sheet.getRange(row, 4).setWrap(true).setVerticalAlignment('top');
+
+  return createResponse(true, 'отчёт сохранён', { row: row });
+}
+
+function pendingReports(ss) {
+  var sheet = ss.getSheetByName(REPORTS_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return createResponse(true, 'нет отчётов', { reports: [] });
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+  var out = [];
+  for (var i = 0; i < values.length; i++) {
+    if (!isEmpty(values[i][4])) continue;            // уже отправлен
+    if (isEmpty(values[i][3])) continue;
+    out.push({ row: i + 2, from: String(values[i][1]), to: String(values[i][2]), text: String(values[i][3]) });
+  }
+  return createResponse(true, 'отчёты', { reports: out });
+}
+
+function markReportSent(ss, data) {
+  var sheet = ss.getSheetByName(REPORTS_SHEET);
+  var row = Number(data.row || 0);
+  if (!sheet || row < 2) return createResponse(false, 'нет такой строки');
+  sheet.getRange(row, 5).setValue(new Date());
+  return createResponse(true, 'отмечен отправленным');
 }
 
 /*** Балансы пропов ***/

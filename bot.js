@@ -404,7 +404,64 @@ async function maybeRunCanary() {
   await runCanary();
 }
 
+// Недельную аналитику считает агент в облаке Claude: у него есть доступ к журналу
+// через Apps Script, но нет ни токена бота, ни права ходить в телеграм. Сам скрипт
+// таблицы наружу тоже не ходит — для этого нужна авторизация владельца через
+// браузер. Поэтому облако кладёт отчёт в лист «Аналитика», а доставляет его сюда
+// бот: он и так единственный, кто умеет писать пользователю.
+const REPORTS_INTERVAL = Number(process.env.REPORTS_INTERVAL_MS || 3 * 60 * 1000);
+let reportsTimer = null;
+
+// Телеграм режет сообщения длиннее 4096 символов. Рвём по абзацам, чтобы отчёт
+// не разваливался посреди строки.
+function splitMessage(text, limit = 3800) {
+  const parts = [];
+  let rest = String(text);
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf('\n\n', limit);
+    if (cut < limit / 2) cut = rest.lastIndexOf('\n', limit);
+    if (cut < limit / 2) cut = limit;
+    parts.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n+/, '');
+  }
+  if (rest.trim()) parts.push(rest);
+  return parts;
+}
+
+async function deliverReports() {
+  const chatId = adminChatId();
+  if (!chatId) return;
+
+  let answer;
+  try {
+    answer = await sheetsPost({ action: 'pendingReports' });
+  } catch (error) {
+    return;                                    // таблица не ответила — попробуем через три минуты
+  }
+  const reports = (answer && answer.data && answer.data.reports) || [];
+
+  for (const report of reports) {
+    try {
+      for (const part of splitMessage(report.text)) {
+        await bot.telegram.sendMessage(chatId, part, { disable_web_page_preview: true });
+        await sleep(300);
+      }
+      // Отмечаем только после успешной отправки: если бот упал на середине,
+      // отчёт останется в очереди и придёт целиком на следующем круге.
+      await sheetsPost({ action: 'markReportSent', row: report.row });
+    } catch (error) {
+      console.error('Отчёт не доставлен:', error.message);
+      return;
+    }
+  }
+}
+
 function startWatchdog() {
+  if (!reportsTimer) {
+    reportsTimer = setInterval(() => { deliverReports().catch(() => {}); }, REPORTS_INTERVAL);
+    reportsTimer.unref();
+  }
+
   if (!WORKER_URL || watchTimer) return;
   // При старте день считаем уже проверенным, иначе перезапуск бота днём
   // тут же выстрелил бы утренней проверкой.
