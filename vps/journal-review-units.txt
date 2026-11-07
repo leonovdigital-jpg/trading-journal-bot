@@ -1,0 +1,21 @@
+[Unit]
+Description=Недельный разбор торгового журнала
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=analyst
+WorkingDirectory=/home/analyst/review
+ExecStart=/home/analyst/review/run.sh
+TimeoutStartSec=3000
+MemoryMax=2G
+[Unit]
+Description=Разбор журнала по субботам в 09:00 по Минску
+
+[Timer]
+# Сервер живёт в UTC, Минск = UTC+3 круглый год.
+OnCalendar=Sat *-*-* 06:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
