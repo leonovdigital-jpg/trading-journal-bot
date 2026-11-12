@@ -202,6 +202,8 @@ function doPost(e) {
     if (data.action === 'setSecret')     return setSecret(ss, data);
     if (data.action === 'saveReport')    return remember(cache, cacheKey, saveReport(ss, data));
     if (data.action === 'pendingReports') return pendingReports(ss);
+    if (data.action === 'setRulesDigest') return setRulesDigest(data);
+    if (data.action === 'getRulesDigest') return getRulesDigest();
     if (data.action === 'markReportSent') return markReportSent(ss, data);
     if (data.action === 'headers')       { buildHeaders(sheet); return createResponse(true, 'headers rebuilt'); }
     if (data.action === 'ping') {
@@ -590,6 +592,25 @@ function weeklyTrades(ss, sheet, data) {
     count: trades.length,
     trades: trades
   });
+}
+
+/*** Сводка по правилам пропов ***/
+
+// Утром сервер сверяет статьи с правилами пропов со вчерашними и пишет сюда
+// короткую сводку, а бот через полчаса вставляет её в утреннее сообщение.
+// Свойства скрипта, а не лист: это одно значение, которое каждый день заменяется.
+// Предел свойства — 9 КБ, поэтому режем с запасом.
+function setRulesDigest(data) {
+  var text = String(data.text || '').trim().slice(0, 3500);
+  if (!text) return createResponse(false, 'пустая сводка');
+  var value = JSON.stringify({ date: String(data.date || ''), text: text });
+  PropertiesService.getScriptProperties().setProperty('RULES_DIGEST', value);
+  return createResponse(true, 'сводка сохранена');
+}
+
+function getRulesDigest() {
+  var raw = PropertiesService.getScriptProperties().getProperty('RULES_DIGEST');
+  return createResponse(true, 'сводка', raw ? JSON.parse(raw) : null);
 }
 
 /*** Почтовый ящик отчётов ***/

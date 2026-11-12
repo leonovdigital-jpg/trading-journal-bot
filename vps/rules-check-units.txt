@@ -1,0 +1,23 @@
+[Unit]
+Description=Сверка правил проп-фирм со вчерашними
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=analyst
+WorkingDirectory=/home/analyst/review
+EnvironmentFile=/home/analyst/review/.env
+Environment=PATH=/home/analyst/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node /home/analyst/review/rules-check.js
+TimeoutStartSec=900
+MemoryMax=1G
+[Unit]
+Description=Сверка правил пропов по будням в 08:30 по Минску
+
+[Timer]
+# Сервер в UTC, Минск = UTC+3. Бот вставляет сводку в утреннее сообщение в 09:00.
+OnCalendar=Mon..Fri *-*-* 05:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

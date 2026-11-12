@@ -368,9 +368,12 @@ function minskDay(date) {
   return new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Minsk' }).format(date);
 }
 
+// Пробный снимок. null — всё в порядке, иначе строка с предупреждением.
+// Об успехе больше не пишем отдельно: пользователь просил вместо «всё работает»
+// присылать новости, а молчание проверки и так означает, что съёмщик жив.
 async function runCanary() {
   const symbol = Object.values(loadSymbols())[0];
-  if (!symbol) return;                                          // ещё не знаем ни одного символа
+  if (!symbol) return null;                                     // ещё не знаем ни одного символа
 
   const started = Date.now();
   try {
@@ -378,23 +381,105 @@ async function runCanary() {
     const seconds = Math.round((Date.now() - started) / 1000);
 
     if (!links || !links['1h']) {
-      await notifyAdmin('⚠️ *Утренняя проверка:* съёмщик ответил, но ссылки не дал. Скрины сегодня могут не сняться.');
-      return;
+      return '⚠️ Съёмщик ответил, но ссылки не дал. Скрины сегодня могут не сняться.';
     }
     if (seconds > CANARY_SLOW_SEC) {
-      await notifyAdmin(
-        `⚠️ *Утренняя проверка:* съёмка заняла ${seconds} с вместо обычных 80–90.\n` +
-        'Съёмщик тормозит — скорее всего скоро отвалится. Скажи мне, я посмотрю.'
-      );
-      return;
+      return `⚠️ Пробная съёмка заняла ${seconds} с вместо обычных 80–90 — съёмщик тормозит, скоро может отвалиться. Скажи мне, я посмотрю.`;
     }
-    await notifyAdmin(`🌅 Проверка перед сессией: всё работает, пробная съёмка ${seconds} с.`);
+    return null;
   } catch (error) {
-    await notifyAdmin(
-      `⚠️ *Утренняя проверка не прошла:* ${error.message}\n` +
-      'Скрины сегодня не снимутся. Сделки записывай как обычно — дошлю, когда починится.'
-    );
+    return `⚠️ Пробная съёмка не прошла: ${error.message}. Скрины сегодня не снимутся — сделки записывай как обычно, дошлю, когда починится.`;
   }
+}
+
+// Красные новости. Какие валюты двигают каждый актив — от этого зависит, какие
+// новости показывать: GDP Великобритании важен для UK100 и безразличен для USDCHF.
+const ASSET_CURRENCIES = {
+  UK100: ['GBP'],
+  USDCHF: ['USD', 'CHF'],
+  XAUUSD: ['USD'],
+  US30: ['USD']
+};
+
+// Какой календарь и что считает «красным» каждая фирма. Разные фирмы размечают
+// новости по-разному, поэтому календарь задаётся на фирму, а не общий.
+// FundingPips: официально — Forex Factory, красные = High (их справочный центр).
+// Фирмы, которых здесь нет, бот честно называет неизвестными, а не подставляет чужой
+// календарь: перепутать окно вокруг новостей на чужом счёте — это слив аккаунта.
+const PROP_NEWS = {
+  'FundingPips': { calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'] }
+};
+
+async function fetchForexFactory() {
+  const r = await axios.get('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {
+    timeout: 20000, headers: { 'User-Agent': 'Mozilla/5.0' }
+  });
+  if (!Array.isArray(r.data)) throw new Error('Forex Factory отдал не список');
+  return r.data;
+}
+
+const minskTime = d => new Intl.DateTimeFormat('ru-RU', {
+  timeZone: 'Europe/Minsk', hour: '2-digit', minute: '2-digit'
+}).format(d);
+
+function redNewsToday(events, impacts, currencies, now) {
+  const today = minskDay(now);
+  return events
+    .filter(e => impacts.includes(e.impact) && currencies.includes(e.country))
+    .map(e => ({ at: new Date(e.date), country: e.country, title: e.title }))
+    .filter(e => !isNaN(e.at) && minskDay(e.at) === today)
+    .sort((a, b) => a.at - b.at);
+}
+
+async function buildMorningDigest(now, canaryWarning) {
+  const weekday = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Minsk', weekday: 'long' }).format(now);
+  const date = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Minsk', day: '2-digit', month: '2-digit' }).format(now);
+  const currencies = [...new Set(ASSETS.flatMap(a => ASSET_CURRENCIES[a] || []))];
+
+  const lines = [`🌅 ${weekday[0].toUpperCase() + weekday.slice(1)}, ${date}`, '', `🔴 Красные новости по ${ASSETS.join(', ')}:`];
+
+  let ff = null, ffError = null;
+  try { ff = await fetchForexFactory(); } catch (e) { ffError = e.message; }
+
+  const props = (await fetchPropInfo().catch(() => ({ props: [] }))).props || [];
+  const names = props.length ? props : Object.keys(PROP_NEWS);
+
+  for (const name of names) {
+    const cfg = PROP_NEWS[name];
+    if (!cfg) { lines.push(`${name}: не знаю, какой календарь у этой фирмы`); continue; }
+    if (cfg.source === 'forexfactory' && !ff) { lines.push(`${name}: календарь не открылся — ${ffError}`); continue; }
+
+    const news = redNewsToday(ff, cfg.impacts, currencies, now);
+    if (!news.length) { lines.push(`${name} (${cfg.calendar}): новостей нет`); continue; }
+
+    lines.push(`${name} (${cfg.calendar}):`);
+    for (const n of news) {
+      const passed = n.at < now ? ' — уже прошла' : '';
+      lines.push(`  ${minskTime(n.at)}  ${n.country}  ${n.title}${passed}`);
+    }
+  }
+
+  // Сводку по правилам сервер пишет в таблицу в 08:30. Если сегодняшней нет —
+  // так и говорим: молчание здесь означало бы «всё спокойно», а это неправда.
+  lines.push('', '📋 Правила пропов:');
+  try {
+    const r = await sheetsPost({ action: 'getRulesDigest' });
+    const d = r && r.data;
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Minsk' }).format(now);
+    if (d && d.date === today && d.text) lines.push(d.text);
+    else lines.push('сегодня проверка правил не отработала — посмотрю, почему.');
+  } catch (e) {
+    lines.push('не смог прочитать сводку из таблицы.');
+  }
+
+  if (canaryWarning) lines.push('', canaryWarning);
+  return lines.join('\n');
+}
+
+// Выходные пропускаем: рынок закрыт, новостей и входов нет.
+function isWeekendInMinsk(d) {
+  const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Minsk', weekday: 'short' }).format(d);
+  return wd === 'Sat' || wd === 'Sun';
 }
 
 // Дёргается тем же таймером, что и проверка здоровья: отдельный будильник не нужен,
@@ -409,7 +494,15 @@ async function maybeRunCanary() {
   if (minutesIn(now, 'Europe/Minsk').minutes < hh * 60 + mm) return;
 
   canaryDoneOn = day;                                           // ставим до запуска: один раз в сутки, чем бы ни кончилось
-  await runCanary();
+  if (isWeekendInMinsk(now)) return;
+
+  const warning = await runCanary();
+  const chatId = adminChatId();
+  if (!chatId) return;
+  const text = await buildMorningDigest(now, warning);
+  // Без разметки: в названиях новостей бывают «_» и «*», Markdown на них ломается.
+  await bot.telegram.sendMessage(chatId, text, { disable_web_page_preview: true })
+    .catch(error => console.error('Утреннее сообщение не ушло:', error.message));
 }
 
 // Недельную аналитику считает агент в облаке Claude: у него есть доступ к журналу
@@ -719,7 +812,7 @@ function sessionKeyboard() {
 // незаконченный опрос и начинает заново.
 const ENTRY_BUTTON = 'ВХОД';
 const AGAINST_QUESTION = '🧨🧨 Аргументы против?';
-const ASSETS = (process.env.ASSETS || 'UK100,USDCHF,US30,XAUUSD').split(',').map(x => x.trim()).filter(Boolean);
+const ASSETS = (process.env.ASSETS || 'UK100,USDCHF,XAUUSD').split(',').map(x => x.trim()).filter(Boolean);
 // Скрин входа бот снимает сам: 5 минут (в пределах сегодняшнего дня), 1h, 4h, 1d.
 // У DXY пятиминутка не нужна — в журнале под него только три колонки.
 const ENTRY_TFS = ['5m', '1h', '4h', '1d'];
@@ -1669,7 +1762,8 @@ app.post('/bot', (req, res) => {
 module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
-  checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo
+  checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo,
+  buildMorningDigest, redNewsToday, isWeekendInMinsk
 };
 
 // На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит
