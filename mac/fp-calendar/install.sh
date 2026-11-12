@@ -30,7 +30,7 @@ else
   chmod 600 "$STATE/key"
 fi
 
-echo "3/4 Ставлю расписание: каждые 30 минут, скрипт сам решает, пора ли."
+echo "3/4 Ставлю расписание: каждые 10 минут, скрипт сам решает, пора ли."
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -39,7 +39,7 @@ cat > "$PLIST" <<EOF
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
   <array><string>/bin/bash</string><string>$DIR/fp-calendar.sh</string></array>
-  <key>StartInterval</key><integer>1800</integer>
+  <key>StartInterval</key><integer>600</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>$HOME/Library/Logs/fp-calendar.log</string>
   <key>StandardErrorPath</key><string>$HOME/Library/Logs/fp-calendar.log</string>

@@ -491,7 +491,7 @@ function fpEventsToday(fp, currencies) {
 // Forex Factory не нужен.
 function fpCalendarLine(fp, today, currencies, label) {
   if (!fp || fp.date !== today) {
-    return { final: false, text: `⏳ ${label}: календарь FundingPips ещё не прочитан — Мак сегодня не включался. Дочитаю, как проснётся.` };
+    return { final: false, text: `⏳ ${label}: календарь FundingPips ещё не прочитан — Мак сегодня ещё не включался. Дочитаю, как проснётся — до открытия Лондона.` };
   }
   const list = evs => evs.map(e => `   ${e.time}  ${e.currency}  ${e.title}`);
   if (fp.status === 'ok') {
@@ -506,10 +506,10 @@ function fpCalendarLine(fp, today, currencies, label) {
     return { final: true, text: [`🔴 ${label}, по календарю FundingPips:`, ...list(restricted)].join('\n') };
   }
   if (fp.status === 'logged_out') {
-    return { final: false, text: `❓ ${label}: календарь не прочитан — тебя выкинуло из кабинета FundingPips. Зайди в Safari (Continue with Google), дочитаю в течение получаса.` };
+    return { final: false, text: `❓ ${label}: календарь не прочитан — тебя выкинуло из кабинета FundingPips. Зайди в Safari (Continue with Google), дочитаю в течение 10 минут.` };
   }
   if (fp.status === 'vpn') {
-    return { final: false, text: `❓ ${label}: календарь не читал — ${fp.reason}. Выключи VPN, дочитаю в течение получаса.` };
+    return { final: false, text: `❓ ${label}: календарь не читал — ${fp.reason}. Выключи VPN, дочитаю в течение 10 минут.` };
   }
   if (fp.status === 'empty') {
     return { final: false, text: `❓ ${label}: календарь открылся, но событий в нём не нашёл — сверь сам.` };
