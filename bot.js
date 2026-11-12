@@ -416,8 +416,11 @@ const ASSET_CURRENCIES = {
 //   не нашлось; сторонние обзоры пишут, что окна нет, но запрещён «news straddling».
 //   Ответа фирмы пока нет.
 const FIRMS = [
+  // allCurrencies: поддержка FundingPips 12.11.2026 — «следуйте всем событиям с меткой
+  // Restricted, а не только связанным с GBP». Поэтому по FundingPips показываем красные
+  // новости всех валют, а не только валют твоих активов.
   { name: 'FundingPips', accounts: ['FundingPips'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
-    mark: '≈', note: 'FundingPips считает только свой календарь (метка Restricted), Forex Factory может расходиться — сверь: https://fundingpips.com/economic-calendar' },
+    allCurrencies: true, mark: '≈', note: 'FundingPips считает только свой календарь (метка Restricted), Forex Factory может расходиться — сверь: https://fundingpips.com/economic-calendar' },
   { name: 'Finotive', accounts: ['Instant', '100k challenge'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
     mark: '*', note: 'Finotive пока не ответила, по какому календарю считает новости' }
 ];
@@ -437,7 +440,7 @@ const minskTime = d => new Intl.DateTimeFormat('ru-RU', {
 function redNewsToday(events, impacts, currencies, now) {
   const today = minskDay(now);
   return events
-    .filter(e => impacts.includes(e.impact) && currencies.includes(e.country))
+    .filter(e => impacts.includes(e.impact) && (!currencies || currencies.includes(e.country)))
     .map(e => ({ at: new Date(e.date), country: e.country, title: e.title }))
     .filter(e => !isNaN(e.at) && minskDay(e.at) === today)
     .sort((a, b) => a.at - b.at);
@@ -464,7 +467,7 @@ async function buildMorningDigest(now, canaryWarning) {
       lines.push(`❓ ${label(firm)}: не смог узнать — ${firm.calendar} не открылся (${ffError})`);
       continue;
     }
-    const news = redNewsToday(ff, firm.impacts, currencies, now);
+    const news = redNewsToday(ff, firm.impacts, firm.allCurrencies ? null : currencies, now);
     if (!news.length) { lines.push(`✅ ${label(firm)}: нет — по ${firm.calendar}${mark}`); continue; }
 
     lines.push(`🔴 ${label(firm)}, по ${firm.calendar}${mark}:`);
