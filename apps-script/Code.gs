@@ -204,6 +204,8 @@ function doPost(e) {
     if (data.action === 'pendingReports') return pendingReports(ss);
     if (data.action === 'setRulesDigest') return setRulesDigest(data);
     if (data.action === 'getRulesDigest') return getRulesDigest();
+    if (data.action === 'setFpCalendar') return setFpCalendar(data);
+    if (data.action === 'getFpCalendar') return getFpCalendar();
     if (data.action === 'markReportSent') return markReportSent(ss, data);
     if (data.action === 'headers')       { buildHeaders(sheet); return createResponse(true, 'headers rebuilt'); }
     if (data.action === 'ping') {
@@ -624,6 +626,38 @@ function getRulesDigest() {
     if (k.indexOf(RULES_PREFIX) === 0) out.push(JSON.parse(all[k]));
   }
   return createResponse(true, 'сводка', out);
+}
+
+/*** Календарь FundingPips с Мака ***/
+
+// Календарь FundingPips закрыт от ботов и доступен только в кабинете, поэтому его
+// читает скрипт в Safari на Маке пользователя, где он уже вошёл. Сюда скрипт кладёт
+// итог чтения за день, а бот на сервере его забирает. status: ok — прочитано;
+// logged_out — выкинуло из кабинета; vpn — включён VPN, страницу не трогали;
+// blocked — защита сайта не пустила; error — что-то ещё.
+function setFpCalendar(data) {
+  var status = String(data.status || '');
+  if (['ok', 'empty', 'logged_out', 'vpn', 'blocked', 'error'].indexOf(status) === -1) {
+    return createResponse(false, 'неизвестный статус');
+  }
+  var payload = {
+    date: String(data.date || ''),
+    status: status,
+    reason: String(data.reason || '').slice(0, 300),
+    checkedAt: new Date().toISOString(),
+    data: data.data || null
+  };
+  var value = JSON.stringify(payload);
+  // Предел свойства 9 КБ: сначала жертвуем образцом разметки, он нужен только для отладки.
+  if (value.length > 8500 && payload.data) { payload.data.sample = ''; value = JSON.stringify(payload); }
+  if (value.length > 8500) return createResponse(false, 'слишком большой календарь: ' + value.length);
+  PropertiesService.getScriptProperties().setProperty('FP_CALENDAR', value);
+  return createResponse(true, 'календарь сохранён');
+}
+
+function getFpCalendar() {
+  var raw = PropertiesService.getScriptProperties().getProperty('FP_CALENDAR');
+  return createResponse(true, 'календарь', raw ? JSON.parse(raw) : null);
 }
 
 /*** Почтовый ящик отчётов ***/

@@ -420,7 +420,11 @@ const FIRMS = [
   // затронутой валюте»; первый сотрудник поддержки сказал, что UK100 — это GBP. Второй
   // «рекомендовал» смотреть все Restricted, но рекомендация не правило, а пользователю
   // нужно только то, за что наказывают. Переспрашиваем у них да/нет.
+  // ownCalendar: точный список берётся из их кабинета — его читает Safari на Маке
+  // пользователя (mac/fp-calendar). Forex Factory — только запасной вариант, пока
+  // календарь не прочитан, и тогда со значком ≈.
   { name: 'FundingPips', accounts: ['FundingPips'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
+    ownCalendar: 'fundingpips',
     mark: '≈', note: 'FundingPips считает только свой календарь (метка Restricted), Forex Factory может расходиться — сверь: https://fundingpips.com/economic-calendar' },
   { name: 'Finotive', accounts: ['Instant', '100k challenge'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
     mark: '*', note: 'Finotive пока не ответила, по какому календарю считает новости' }
@@ -437,6 +441,81 @@ async function fetchForexFactory() {
 const minskTime = d => new Intl.DateTimeFormat('ru-RU', {
   timeZone: 'Europe/Minsk', hour: '2-digit', minute: '2-digit'
 }).format(d);
+
+// Календарь FundingPips, прочитанный Safari на Маке пользователя (mac/fp-calendar).
+// Мак кладёт итог чтения в таблицу; здесь его разбираем.
+async function fetchFpCalendar() {
+  const r = await sheetsPost({ action: 'getFpCalendar' });
+  return (r && r.data) || null;
+}
+
+function to24h(s) {
+  const m = String(s || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!m) return '??:??';
+  let h = Number(m[1]);
+  const ap = (m[3] || '').toUpperCase();
+  if (ap === 'PM' && h < 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${m[2]}`;
+}
+
+// Что в строке означает метку Restricted (замочек), видно только по настоящей
+// странице — кабинет закрыт, разметку снаружи не посмотреть. Мак присылает все
+// значки строки, а решаем здесь: правка не требует трогать Мак.
+function fpRestricted(row) {
+  return (row.icons || []).some(i => /lock|restrict/i.test(i));
+}
+
+function fpEventsToday(fp, currencies) {
+  const rows = (fp.data && fp.data.rows) || [];
+  const parsed = rows
+    .filter(r => !r.day || /^today/i.test(r.day))
+    .map(r => {
+      const parts = String(r.text || '').split(' | ');
+      const ci = parts.findIndex(p => /^[A-Z]{3}$/.test(p));
+      return {
+        time: to24h(parts[0]),
+        currency: ci >= 0 ? parts[ci] : '',
+        title: ci >= 0 ? (parts[ci + 1] || '') : parts.slice(1).join(' '),
+        restricted: fpRestricted(r)
+      };
+    });
+  return {
+    lockSeen: rows.some(fpRestricted),
+    restricted: parsed.filter(e => e.restricted && currencies.includes(e.currency)),
+    mine: parsed.filter(e => currencies.includes(e.currency))
+  };
+}
+
+// Строка про FundingPips по прочитанному календарю. final — список точный и запасной
+// Forex Factory не нужен.
+function fpCalendarLine(fp, today, currencies, label) {
+  if (!fp || fp.date !== today) {
+    return { final: false, text: `⏳ ${label}: календарь FundingPips ещё не прочитан — Мак сегодня не включался. Дочитаю, как проснётся.` };
+  }
+  const list = evs => evs.map(e => `   ${e.time}  ${e.currency}  ${e.title}`);
+  if (fp.status === 'ok') {
+    const { lockSeen, restricted, mine } = fpEventsToday(fp, currencies);
+    if (!lockSeen && mine.length) {
+      return { final: true, text: [
+        `🔴 ${label}, по календарю FundingPips (метку Restricted распознать не смог — показываю все события по твоим валютам):`,
+        ...list(mine)
+      ].join('\n') };
+    }
+    if (!restricted.length) return { final: true, text: `✅ ${label}: нет — по календарю FundingPips` };
+    return { final: true, text: [`🔴 ${label}, по календарю FundingPips:`, ...list(restricted)].join('\n') };
+  }
+  if (fp.status === 'logged_out') {
+    return { final: false, text: `❓ ${label}: календарь не прочитан — тебя выкинуло из кабинета FundingPips. Зайди в Safari (Continue with Google), дочитаю в течение получаса.` };
+  }
+  if (fp.status === 'vpn') {
+    return { final: false, text: `❓ ${label}: календарь не читал — ${fp.reason}. Выключи VPN, дочитаю в течение получаса.` };
+  }
+  if (fp.status === 'empty') {
+    return { final: false, text: `❓ ${label}: календарь открылся, но событий в нём не нашёл — сверь сам.` };
+  }
+  return { final: false, text: `❓ ${label}: календарь не прочитан — ${fp.reason || fp.status}.` };
+}
 
 function redNewsToday(events, impacts, currencies, now) {
   const today = minskDay(now);
@@ -460,21 +539,41 @@ async function buildMorningDigest(now, canaryWarning) {
   let ff = null, ffError = null;
   try { ff = await fetchForexFactory(); } catch (e) { ffError = e.message; }
 
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Minsk' }).format(now);
+  let fp = null;
+  if (FIRMS.some(f => f.ownCalendar === 'fundingpips')) {
+    try { fp = await fetchFpCalendar(); } catch (e) { fp = { date: today, status: 'error', reason: `таблица не ответила (${e.message})` }; }
+  }
+
   const notes = [];
   for (const firm of FIRMS) {
     const mark = firm.mark || '';
+    let indent = '';
+
+    if (firm.ownCalendar === 'fundingpips') {
+      digestFpKey = fp && fp.date === today ? fpKey(fp) : '';
+      const st = fpCalendarLine(fp, today, currencies, label(firm));
+      lines.push(st.text);
+      if (st.final) continue;
+      indent = '   пока ';                                   // дальше — запасной список
+    }
+
     if (firm.note && !notes.includes(`${mark} ${firm.note}`)) notes.push(`${mark} ${firm.note}`);
     if (firm.source === 'forexfactory' && !ff) {
-      lines.push(`❓ ${label(firm)}: не смог узнать — ${firm.calendar} не открылся (${ffError})`);
+      lines.push(`${indent || '❓ '}${indent ? '' : label(firm) + ': '}не смог узнать — ${firm.calendar} не открылся (${ffError})`);
       continue;
     }
     const news = redNewsToday(ff, firm.impacts, firm.allCurrencies ? null : currencies, now);
-    if (!news.length) { lines.push(`✅ ${label(firm)}: нет — по ${firm.calendar}${mark}`); continue; }
-
-    lines.push(`🔴 ${label(firm)}, по ${firm.calendar}${mark}:`);
+    if (indent) {
+      if (!news.length) { lines.push(`${indent}по ${firm.calendar}${mark}: нет`); continue; }
+      lines.push(`${indent}по ${firm.calendar}${mark}:`);
+    } else {
+      if (!news.length) { lines.push(`✅ ${label(firm)}: нет — по ${firm.calendar}${mark}`); continue; }
+      lines.push(`🔴 ${label(firm)}, по ${firm.calendar}${mark}:`);
+    }
     for (const n of news) {
       const passed = n.at < now ? ' — уже прошла' : '';
-      lines.push(`   ${minskTime(n.at)}  ${n.country}  ${n.title}${passed}`);
+      lines.push(`${indent ? '      ' : '   '}${minskTime(n.at)}  ${n.country}  ${n.title}${passed}`);
     }
   }
   for (const n of notes) lines.push(n);
@@ -482,7 +581,6 @@ async function buildMorningDigest(now, canaryWarning) {
   // Итог по правилам сервер пишет в таблицу в 08:30, по фирме отдельно. Нет
   // сегодняшнего итога — так и говорим: молчание здесь означало бы «всё спокойно».
   lines.push('', '📋 Изменения правил:');
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Minsk' }).format(now);
   let digest = null, digestError = null;
   try {
     const r = await sheetsPost({ action: 'getRulesDigest' });
@@ -556,6 +654,7 @@ async function maybeRunCanary() {
     // Без разметки: в названиях новостей бывают «_» и «*», Markdown на них ломается.
     await bot.telegram.sendMessage(chatId, text, { disable_web_page_preview: true });
     markDigestSent(day);
+    if (digestFpKey) markFpAnnounced(digestFpKey);
   } catch (error) {
     // Не отметили отправку — через пять минут бот попробует снова.
     console.error('Утреннее сообщение не ушло:', error.message);
@@ -616,9 +715,49 @@ async function deliverReports() {
   }
 }
 
+// Календарь FundingPips часто приходит позже утренней сводки: Мак читает его, когда
+// просыпается. Как только итог чтения за сегодня поменялся (прочитан, выкинуло из
+// кабинета, включён VPN), бот дописывает отдельным сообщением — один раз на каждый итог.
+const FP_ANNOUNCED_FILE = process.env.FP_ANNOUNCED_FILE || `${__dirname}/fp-announced.txt`;
+let digestFpKey = '';
+
+const fpKey = fp => `${fp.date}|${fp.status}|${fp.reason || ''}`;
+function fpAnnounced() {
+  try { return require('fs').readFileSync(FP_ANNOUNCED_FILE, 'utf8').trim(); } catch (e) { return ''; }
+}
+function markFpAnnounced(key) {
+  try { require('fs').writeFileSync(FP_ANNOUNCED_FILE, key); } catch (e) { console.error('Не смог отметить календарь FundingPips:', e.message); }
+}
+
+async function announceFpCalendar() {
+  const firm = FIRMS.find(f => f.ownCalendar === 'fundingpips');
+  if (!firm) return;
+  const now = new Date();
+  if (isWeekendInMinsk(now)) return;
+  if (digestSentOn() !== minskDay(now)) return;          // сводки ещё не было — всё войдёт в неё
+  const [lh, lm] = DIGEST_LAST_HHMM.split(':').map(Number);
+  if (minutesIn(now, 'Europe/Minsk').minutes > lh * 60 + lm) return;
+  const chatId = adminChatId();
+  if (!chatId) return;
+
+  const fp = await fetchFpCalendar();
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Minsk' }).format(now);
+  if (!fp || fp.date !== today) return;
+  const key = fpKey(fp);
+  if (fpAnnounced() === key) return;
+
+  const currencies = [...new Set(ASSETS.flatMap(a => ASSET_CURRENCIES[a] || []))];
+  const st = fpCalendarLine(fp, today, currencies, firm.name);
+  await bot.telegram.sendMessage(chatId, `📅 ${st.text}`, { disable_web_page_preview: true });
+  markFpAnnounced(key);
+}
+
 function startWatchdog() {
   if (!reportsTimer) {
-    reportsTimer = setInterval(() => { deliverReports().catch(() => {}); }, REPORTS_INTERVAL);
+    reportsTimer = setInterval(() => {
+      deliverReports().catch(() => {});
+      announceFpCalendar().catch(e => console.error('Календарь FundingPips:', e.message));
+    }, REPORTS_INTERVAL);
     reportsTimer.unref();
   }
 
@@ -1822,7 +1961,8 @@ module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
   checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo,
-  buildMorningDigest, redNewsToday, isWeekendInMinsk, FIRMS
+  buildMorningDigest, redNewsToday, isWeekendInMinsk, FIRMS,
+  fpCalendarLine, fpEventsToday, announceFpCalendar
 };
 
 // На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит
