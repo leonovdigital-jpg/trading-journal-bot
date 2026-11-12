@@ -416,11 +416,12 @@ const ASSET_CURRENCIES = {
 //   не нашлось; сторонние обзоры пишут, что окна нет, но запрещён «news straddling».
 //   Ответа фирмы пока нет.
 const FIRMS = [
-  // allCurrencies: поддержка FundingPips 12.11.2026 — «следуйте всем событиям с меткой
-  // Restricted, а не только связанным с GBP». Поэтому по FundingPips показываем красные
-  // новости всех валют, а не только валют твоих активов.
+  // Только валюты активов, а не все. Правило в справке FundingPips — «новость по
+  // затронутой валюте»; первый сотрудник поддержки сказал, что UK100 — это GBP. Второй
+  // «рекомендовал» смотреть все Restricted, но рекомендация не правило, а пользователю
+  // нужно только то, за что наказывают. Переспрашиваем у них да/нет.
   { name: 'FundingPips', accounts: ['FundingPips'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
-    allCurrencies: true, mark: '≈', note: 'FundingPips считает только свой календарь (метка Restricted), Forex Factory может расходиться — сверь: https://fundingpips.com/economic-calendar' },
+    mark: '≈', note: 'FundingPips считает только свой календарь (метка Restricted), Forex Factory может расходиться — сверь: https://fundingpips.com/economic-calendar' },
   { name: 'Finotive', accounts: ['Instant', '100k challenge'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
     mark: '*', note: 'Finotive пока не ответила, по какому календарю считает новости' }
 ];
