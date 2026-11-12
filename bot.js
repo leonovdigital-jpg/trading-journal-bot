@@ -404,19 +404,22 @@ const ASSET_CURRENCIES = {
 // Фирмы, их счета и календарь новостей. Разные фирмы размечают новости по-разному,
 // поэтому календарь задаётся на фирму, а не общий.
 //
-// confirmed: false — фирма ещё не подтвердила, что её «красное» совпадает с этим
-// календарём. Бот тогда ставит звёздочку, чтобы на совпадение не полагались вслепую.
+// note — сноска, если список по этому календарю у фирмы не официальный. Бот ставит
+// значок и печатает сноску, чтобы на совпадение не полагались вслепую.
 //
-// FundingPips: в нынешней справке официальный источник — «Economic Calendar» в их
-//   кабинете (за логином), события с меткой Restricted. Только старая статья
-//   «1 Step Model» говорит «Forex Factory, красные = High». Пока не подтвердят —
-//   показываем Forex Factory со звёздочкой.
+// FundingPips (подтвердила поддержка 12.11.2026): официальный — только их собственный
+//   календарь, считаются события с меткой Restricted, рейтинг других календарей
+//   роли не играет. Страница fundingpips.com/economic-calendar закрыта защитой Vercel
+//   от автоматических браузеров — и с сервера, и отсюда. Обходить её не стали.
+//   Поэтому Forex Factory — подсказка, а сверять надо по их ссылке.
 // Finotive (счета Instant и 100k challenge): на сайте фирмы окна вокруг новостей
 //   не нашлось; сторонние обзоры пишут, что окна нет, но запрещён «news straddling».
-//   Тоже не подтверждено — показываем Forex Factory со звёздочкой.
+//   Ответа фирмы пока нет.
 const FIRMS = [
-  { name: 'FundingPips', accounts: ['FundingPips'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'], confirmed: false },
-  { name: 'Finotive', accounts: ['Instant', '100k challenge'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'], confirmed: false }
+  { name: 'FundingPips', accounts: ['FundingPips'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
+    mark: '≈', note: 'FundingPips считает только свой календарь (метка Restricted), Forex Factory может расходиться — сверь: https://fundingpips.com/economic-calendar' },
+  { name: 'Finotive', accounts: ['Instant', '100k challenge'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
+    mark: '*', note: 'Finotive пока не ответила, по какому календарю считает новости' }
 ];
 
 async function fetchForexFactory() {
@@ -453,10 +456,10 @@ async function buildMorningDigest(now, canaryWarning) {
   let ff = null, ffError = null;
   try { ff = await fetchForexFactory(); } catch (e) { ffError = e.message; }
 
-  let unconfirmed = false;
+  const notes = [];
   for (const firm of FIRMS) {
-    const mark = firm.confirmed ? '' : '*';
-    if (!firm.confirmed) unconfirmed = true;
+    const mark = firm.mark || '';
+    if (firm.note && !notes.includes(`${mark} ${firm.note}`)) notes.push(`${mark} ${firm.note}`);
     if (firm.source === 'forexfactory' && !ff) {
       lines.push(`❓ ${label(firm)}: не смог узнать — ${firm.calendar} не открылся (${ffError})`);
       continue;
@@ -470,7 +473,7 @@ async function buildMorningDigest(now, canaryWarning) {
       lines.push(`   ${minskTime(n.at)}  ${n.country}  ${n.title}${passed}`);
     }
   }
-  if (unconfirmed) lines.push('* что «красное» у фирмы совпадает с этим календарём, она пока не подтвердила');
+  for (const n of notes) lines.push(n);
 
   // Итог по правилам сервер пишет в таблицу в 08:30, по фирме отдельно. Нет
   // сегодняшнего итога — так и говорим: молчание здесь означало бы «всё спокойно».

@@ -28,7 +28,10 @@ const DIR = path.join(__dirname, 'rules');
 // Finotive: справочный центр собирается скриптом в браузере, без браузера его не
 //   прочитать. Зато официальная страница правил отдаётся целиком.
 const FIRMS = [
-  { firm: 'FundingPips', type: 'zendesk', base: 'https://help.fundingpips.com', locale: 'en-us' },
+  // Поддержка FundingPips 12.11.2026: правила счёта определяются датой его покупки.
+  // Значит, правка в справке касается новых счетов, а уже купленный живёт по старым.
+  { firm: 'FundingPips', type: 'zendesk', base: 'https://help.fundingpips.com', locale: 'en-us',
+    context: 'Важно: у этой фирмы правила счёта определяются датой его покупки. Изменение касается счетов, купленных после него, а уже купленный счёт трейдера живёт по старым правилам. Скажи об этом одной фразой в конце — это пригодится, когда он будет покупать следующий счёт.' },
   { firm: 'Finotive', type: 'pages', urls: ['https://finotivefunding.com/rules'] }
 ];
 
@@ -112,7 +115,7 @@ function compare(before, after) {
   return changes;
 }
 
-function summarize(firm, changes) {
+function summarize(firm, changes, context) {
   const body = changes.map(c =>
     `### ${c.kind}: ${c.title}\n${c.url}\n${c.diff ? '```diff\n' + c.diff + '\n```' : ''}`
   ).join('\n\n');
@@ -129,7 +132,7 @@ function summarize(firm, changes) {
   на каждое изменение, с числами «было → стало», и к какому типу счёта это относится.
 - Если правки косметические (опечатки, форматирование, маркетинг, акции, цены) — так и скажи одной фразой.
 Ничего не выдумывай: если из diff не понять, что изменилось по сути, так и напиши.
-
+${context ? '\n' + context + '\n' : ''}
 ${body}`;
 
   return execFileSync('claude', ['-p', prompt, '--model', 'opus'], {
@@ -178,7 +181,7 @@ async function checkFirm(src) {
   const list = changes.map(c => `• ${c.kind}: ${c.title} — ${c.url}`).join('\n');
   let summary;
   try {
-    summary = summarize(src.firm, changes);
+    summary = summarize(src.firm, changes, src.context);
   } catch (e) {
     console.error('разбор упал:', e.message);
     // Снимок не трогаем — завтра эти же изменения найдутся и разберутся снова.
