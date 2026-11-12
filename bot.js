@@ -401,17 +401,26 @@ const ASSET_CURRENCIES = {
   US30: ['USD']
 };
 
-// Какой календарь и что считает «красным» каждая фирма. Разные фирмы размечают
-// новости по-разному, поэтому календарь задаётся на фирму, а не общий.
-// FundingPips: официально — Forex Factory, красные = High (их справочный центр).
-// Фирмы, которых здесь нет, бот честно называет неизвестными, а не подставляет чужой
-// календарь: перепутать окно вокруг новостей на чужом счёте — это слив аккаунта.
-const PROP_NEWS = {
-  'FundingPips': { calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'] }
-};
+// Фирмы, их счета и календарь новостей. Разные фирмы размечают новости по-разному,
+// поэтому календарь задаётся на фирму, а не общий.
+//
+// confirmed: false — фирма ещё не подтвердила, что её «красное» совпадает с этим
+// календарём. Бот тогда ставит звёздочку, чтобы на совпадение не полагались вслепую.
+//
+// FundingPips: в нынешней справке официальный источник — «Economic Calendar» в их
+//   кабинете (за логином), события с меткой Restricted. Только старая статья
+//   «1 Step Model» говорит «Forex Factory, красные = High». Пока не подтвердят —
+//   показываем Forex Factory со звёздочкой.
+// Finotive (счета Instant и 100k challenge): на сайте фирмы окна вокруг новостей
+//   не нашлось; сторонние обзоры пишут, что окна нет, но запрещён «news straddling».
+//   Тоже не подтверждено — показываем Forex Factory со звёздочкой.
+const FIRMS = [
+  { name: 'FundingPips', accounts: ['FundingPips'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'], confirmed: false },
+  { name: 'Finotive', accounts: ['Instant', '100k challenge'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'], confirmed: false }
+];
 
 async function fetchForexFactory() {
-  const r = await axios.get('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {
+  const r = await axios.get(process.env.FF_URL || 'https://nfs.faireconomy.media/ff_calendar_thisweek.json', {
     timeout: 20000, headers: { 'User-Agent': 'Mozilla/5.0' }
   });
   if (!Array.isArray(r.data)) throw new Error('Forex Factory отдал не список');
@@ -437,43 +446,66 @@ async function buildMorningDigest(now, canaryWarning) {
   const currencies = [...new Set(ASSETS.flatMap(a => ASSET_CURRENCIES[a] || []))];
 
   const lines = [`🌅 ${weekday[0].toUpperCase() + weekday.slice(1)}, ${date}`, '', `🔴 Красные новости по ${ASSETS.join(', ')}:`];
+  const label = f => (f.accounts.length === 1 && f.accounts[0] === f.name) ? f.name : `${f.name} (${f.accounts.join(', ')})`;
 
+  // У каждой фирмы всегда ровно один из трёх итогов: «нет», «вот какие», «сбой».
+  // Пустая строка или пропущенная фирма читались бы как «новостей нет».
   let ff = null, ffError = null;
   try { ff = await fetchForexFactory(); } catch (e) { ffError = e.message; }
 
-  const props = (await fetchPropInfo().catch(() => ({ props: [] }))).props || [];
-  const names = props.length ? props : Object.keys(PROP_NEWS);
+  let unconfirmed = false;
+  for (const firm of FIRMS) {
+    const mark = firm.confirmed ? '' : '*';
+    if (!firm.confirmed) unconfirmed = true;
+    if (firm.source === 'forexfactory' && !ff) {
+      lines.push(`❓ ${label(firm)}: не смог узнать — ${firm.calendar} не открылся (${ffError})`);
+      continue;
+    }
+    const news = redNewsToday(ff, firm.impacts, currencies, now);
+    if (!news.length) { lines.push(`✅ ${label(firm)}: нет — по ${firm.calendar}${mark}`); continue; }
 
-  for (const name of names) {
-    const cfg = PROP_NEWS[name];
-    if (!cfg) { lines.push(`${name}: не знаю, какой календарь у этой фирмы`); continue; }
-    if (cfg.source === 'forexfactory' && !ff) { lines.push(`${name}: календарь не открылся — ${ffError}`); continue; }
-
-    const news = redNewsToday(ff, cfg.impacts, currencies, now);
-    if (!news.length) { lines.push(`${name} (${cfg.calendar}): новостей нет`); continue; }
-
-    lines.push(`${name} (${cfg.calendar}):`);
+    lines.push(`🔴 ${label(firm)}, по ${firm.calendar}${mark}:`);
     for (const n of news) {
       const passed = n.at < now ? ' — уже прошла' : '';
-      lines.push(`  ${minskTime(n.at)}  ${n.country}  ${n.title}${passed}`);
+      lines.push(`   ${minskTime(n.at)}  ${n.country}  ${n.title}${passed}`);
     }
   }
+  if (unconfirmed) lines.push('* что «красное» у фирмы совпадает с этим календарём, она пока не подтвердила');
 
-  // Сводку по правилам сервер пишет в таблицу в 08:30. Если сегодняшней нет —
-  // так и говорим: молчание здесь означало бы «всё спокойно», а это неправда.
-  lines.push('', '📋 Правила пропов:');
+  // Итог по правилам сервер пишет в таблицу в 08:30, по фирме отдельно. Нет
+  // сегодняшнего итога — так и говорим: молчание здесь означало бы «всё спокойно».
+  lines.push('', '📋 Изменения правил:');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Minsk' }).format(now);
+  let digest = null, digestError = null;
   try {
     const r = await sheetsPost({ action: 'getRulesDigest' });
-    const d = r && r.data;
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Minsk' }).format(now);
-    if (d && d.date === today && d.text) lines.push(d.text);
-    else lines.push('сегодня проверка правил не отработала — посмотрю, почему.');
-  } catch (e) {
-    lines.push('не смог прочитать сводку из таблицы.');
+    digest = (r && Array.isArray(r.data)) ? r.data : [];
+  } catch (e) { digestError = e.message; }
+
+  const icon = { none: '✅', changed: '⚠️', error: '❓', started: '🆕' };
+  for (const firm of FIRMS) {
+    if (!digest) { lines.push(`❓ ${firm.name}: не смог проверить — таблица не ответила (${digestError})`); continue; }
+    const d = digest.find(x => x.firm === firm.name);
+    if (!d || d.date !== today) { lines.push(`❓ ${firm.name}: не смог проверить — сегодня проверка не отработала`); continue; }
+    lines.push(`${icon[d.status] || '❓'} ${firm.name}: ${d.status === 'none' ? 'нет' : d.text}`);
   }
 
   if (canaryWarning) lines.push('', canaryWarning);
   return lines.join('\n');
+}
+
+// Утреннее сообщение не должно теряться, если бот перезапустился после 09:00:
+// раньше перезапуск днём помечал день «сделанным», и сообщение в этот день не
+// приходило вовсе. Теперь день отправки хранится на диске, и бот досылает пропущенное
+// до 22:00 — позже это уже не утренняя сводка, а шум.
+const DIGEST_SENT_FILE = process.env.DIGEST_SENT_FILE || `${__dirname}/digest-sent.txt`;
+const DIGEST_LAST_HHMM = '22:00';
+
+function digestSentOn() {
+  try { return require('fs').readFileSync(DIGEST_SENT_FILE, 'utf8').trim(); } catch (e) { return ''; }
+}
+function markDigestSent(day) {
+  try { require('fs').writeFileSync(DIGEST_SENT_FILE, day); } catch (e) { console.error('Не смог отметить отправку:', e.message); }
 }
 
 // Выходные пропускаем: рынок закрыт, новостей и входов нет.
@@ -489,20 +521,39 @@ async function maybeRunCanary() {
   const now = new Date();
   const day = minskDay(now);
   if (canaryDoneOn === day) return;
+  if (digestSentOn() === day) { canaryDoneOn = day; return; }   // уже отправлено, в том числе до перезапуска
 
+  const minutes = minutesIn(now, 'Europe/Minsk').minutes;
   const [hh, mm] = CANARY_HHMM.split(':').map(Number);
-  if (minutesIn(now, 'Europe/Minsk').minutes < hh * 60 + mm) return;
+  const [lh, lm] = DIGEST_LAST_HHMM.split(':').map(Number);
+  if (minutes < hh * 60 + mm || minutes > lh * 60 + lm) return;
 
   canaryDoneOn = day;                                           // ставим до запуска: один раз в сутки, чем бы ни кончилось
   if (isWeekendInMinsk(now)) return;
 
-  const warning = await runCanary();
   const chatId = adminChatId();
   if (!chatId) return;
-  const text = await buildMorningDigest(now, warning);
-  // Без разметки: в названиях новостей бывают «_» и «*», Markdown на них ломается.
-  await bot.telegram.sendMessage(chatId, text, { disable_web_page_preview: true })
-    .catch(error => console.error('Утреннее сообщение не ушло:', error.message));
+
+  const warning = await runCanary();
+  let text;
+  try {
+    text = await buildMorningDigest(now, warning);
+  } catch (error) {
+    // Сборка упала — всё равно пишем, иначе пустое утро читалось бы как «новостей нет».
+    console.error('Утреннее сообщение не собралось:', error.message);
+    text = `🌅 Утренняя сводка не собралась: ${error.message}\n\n❓ Новости и правила сегодня проверь сам.` +
+      (warning ? `\n\n${warning}` : '');
+  }
+
+  try {
+    // Без разметки: в названиях новостей бывают «_» и «*», Markdown на них ломается.
+    await bot.telegram.sendMessage(chatId, text, { disable_web_page_preview: true });
+    markDigestSent(day);
+  } catch (error) {
+    // Не отметили отправку — через пять минут бот попробует снова.
+    console.error('Утреннее сообщение не ушло:', error.message);
+    canaryDoneOn = null;
+  }
 }
 
 // Недельную аналитику считает агент в облаке Claude: у него есть доступ к журналу
@@ -565,9 +616,10 @@ function startWatchdog() {
   }
 
   if (!WORKER_URL || watchTimer) return;
-  // При старте день считаем уже проверенным, иначе перезапуск бота днём
-  // тут же выстрелил бы утренней проверкой.
-  canaryDoneOn = minskDay(new Date());
+  // Раньше при старте день сразу считался «проверенным», чтобы перезапуск днём не
+  // слал утреннее сообщение повторно. Но так оно терялось совсем, если бот
+  // перезапускался после 09:00. Повтор теперь отсекает отметка на диске
+  // (digest-sent.txt), а пропущенное досылается.
   watchTimer = setInterval(() => {
     checkWorker().then(maybeRunCanary).catch(() => {});
   }, WATCH_INTERVAL);
@@ -1763,7 +1815,7 @@ module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
   checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo,
-  buildMorningDigest, redNewsToday, isWeekendInMinsk
+  buildMorningDigest, redNewsToday, isWeekendInMinsk, FIRMS
 };
 
 // На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит

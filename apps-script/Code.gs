@@ -596,21 +596,34 @@ function weeklyTrades(ss, sheet, data) {
 
 /*** Сводка по правилам пропов ***/
 
-// Утром сервер сверяет статьи с правилами пропов со вчерашними и пишет сюда
-// короткую сводку, а бот через полчаса вставляет её в утреннее сообщение.
-// Свойства скрипта, а не лист: это одно значение, которое каждый день заменяется.
-// Предел свойства — 9 КБ, поэтому режем с запасом.
+// Утром сервер сверяет правила пропов со вчерашними и пишет сюда итог по каждой
+// фирме, а бот через полчаса вставляет его в утреннее сообщение.
+// По свойству на фирму: предел свойства 9 КБ, а кириллица — два байта на букву,
+// так что одна общая сводка на несколько фирм в него не влезла бы.
+var RULES_PREFIX = 'RULESFIRM_';
+
 function setRulesDigest(data) {
-  var text = String(data.text || '').trim().slice(0, 3500);
-  if (!text) return createResponse(false, 'пустая сводка');
-  var value = JSON.stringify({ date: String(data.date || ''), text: text });
-  PropertiesService.getScriptProperties().setProperty('RULES_DIGEST', value);
+  var firm = String(data.firm || '').trim();
+  var status = String(data.status || '');
+  if (!firm) return createResponse(false, 'нет фирмы');
+  if (['none', 'changed', 'error', 'started'].indexOf(status) === -1) return createResponse(false, 'неизвестный статус');
+  var value = JSON.stringify({
+    firm: firm,
+    date: String(data.date || ''),
+    status: status,
+    text: String(data.text || '').trim().slice(0, 3500)
+  });
+  PropertiesService.getScriptProperties().setProperty(RULES_PREFIX + firm, value);
   return createResponse(true, 'сводка сохранена');
 }
 
 function getRulesDigest() {
-  var raw = PropertiesService.getScriptProperties().getProperty('RULES_DIGEST');
-  return createResponse(true, 'сводка', raw ? JSON.parse(raw) : null);
+  var all = PropertiesService.getScriptProperties().getProperties();
+  var out = [];
+  for (var k in all) {
+    if (k.indexOf(RULES_PREFIX) === 0) out.push(JSON.parse(all[k]));
+  }
+  return createResponse(true, 'сводка', out);
 }
 
 /*** Почтовый ящик отчётов ***/
