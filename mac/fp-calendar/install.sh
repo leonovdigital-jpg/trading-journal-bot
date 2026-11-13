@@ -5,6 +5,15 @@
 # сделает первое чтение, чтобы macOS спросила разрешение, пока ты у экрана.
 set -eu
 
+# 13.11.2026 установку случайно запустили в терминале VS Code — а он подключён
+# к Linux-серверу, не к Маку. Дошло до последнего шага и упало на launchctl,
+# оставив на сервере файлы и ключ. Теперь проверяем сразу.
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "Это не Мак (система: $(uname -s), компьютер: $(hostname))."
+  echo "Запусти команду в приложении «Терминал» на самом Маке: Cmd + Пробел → Терминал."
+  exit 1
+fi
+
 RAW="https://raw.githubusercontent.com/leonovdigital-jpg/trading-journal-bot/main/mac/fp-calendar"
 DIR="$HOME/.local/share/fp-calendar"
 STATE="$HOME/Library/Application Support/fp-calendar"
