@@ -426,8 +426,14 @@ const FIRMS = [
   { name: 'FundingPips', accounts: ['FundingPips'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
     ownCalendar: 'fundingpips',
     mark: '≈', note: 'FundingPips считает только свой календарь (метка Restricted), Forex Factory может расходиться — сверь: https://fundingpips.com/economic-calendar' },
-  { name: 'Finotive', accounts: ['Instant', '100k challenge'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
-    mark: '*', note: 'Finotive пока не ответила, по какому календарю считает новости' }
+  // Finotive (справка, статьи 897 и 952, и ответ поддержки 13.11.2026): торговать на
+  // новостях можно на всех этапах. Запрещён только news straddling — встречные или
+  // хеджирующие позиции на том же/связанном инструменте за 15 минут до и после красных
+  // и жёлтых новостей Forex Factory. Обычную сделку в одну сторону новость не делает
+  // нарушением, а пользователю нужно только то, за что наказывают, — поэтому списка
+  // новостей для Finotive нет, только одна строка с правилом.
+  { name: 'Finotive', accounts: ['Instant', '100k challenge'], noNewsWindow: true,
+    rule: 'новости не ограничены. Нельзя только встречные или хедж-позиции ±15 мин от красных и жёлтых новостей Forex Factory' }
 ];
 
 // Forex Factory ограничивает частоту запросов и отвечает 429, если его дёргать
@@ -584,8 +590,14 @@ async function buildMorningDigest(now, canaryWarning) {
     if (!m.firms.includes(firm.name + mark)) m.firms.push(firm.name + mark);
   };
 
+  const ruleLines = [];               // фирмы без окна по новостям — их правило одной строкой
   for (const firm of FIRMS) {
     let mark = firm.mark || '';
+
+    if (firm.noNewsWindow) {
+      ruleLines.push(`✅ ${label(firm)}: ${firm.rule}`);
+      continue;
+    }
 
     if (firm.ownCalendar === 'fundingpips') {
       digestFpKey = fp && fp.date === today ? fpKey(fp) : '';
@@ -615,17 +627,18 @@ async function buildMorningDigest(now, canaryWarning) {
   for (const st of status) lines.push(st);
   const events = [...merged.values()].sort((a, b) => a.time.localeCompare(b.time));
   if (!events.length) {
-    if (!failed) lines.push('✅ Нет — ни у одной фирмы');
+    if (!failed) for (const name of resolved) lines.push(`✅ ${name}: нет`);
     else for (const name of resolved) lines.push(`✅ ${name}: нет`);
   } else {
-    const allNames = FIRMS.map(f => f.name);
+    const allNames = FIRMS.filter(f => !f.noNewsWindow).map(f => f.name);
     for (const e of events) {
       const everyone = allNames.every(n => e.firms.some(f => f.replace(/[≈*]$/, '') === n));
-      const who = everyone ? 'у всех' : `только ${e.firms.join(', ')}`;
+      const who = allNames.length === 1 ? e.firms.join(', ') : (everyone ? 'у всех' : `только ${e.firms.join(', ')}`);
       const title = e.titles.slice(0, 2).join(' / ');
       lines.push(`   ${e.time}  ${e.currency}  ${title} — ${who}${e.passed ? ' (уже прошла)' : ''}`);
     }
   }
+  for (const n of ruleLines) lines.push(n);
   for (const n of notes) lines.push(n);
 
   // Итог по правилам сервер пишет в таблицу в 08:30, по фирме отдельно. Нет

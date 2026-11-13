@@ -32,7 +32,13 @@ const FIRMS = [
   // Значит, правка в справке касается новых счетов, а уже купленный живёт по старым.
   { firm: 'FundingPips', type: 'zendesk', base: 'https://help.fundingpips.com', locale: 'en-us',
     context: 'Важно: у этой фирмы правила счёта определяются датой его покупки. Изменение касается счетов, купленных после него, а уже купленный счёт трейдера живёт по старым правилам. Скажи об этом одной фразой в конце — это пригодится, когда он будет покупать следующий счёт.' },
-  { firm: 'Finotive', type: 'pages', urls: ['https://finotivefunding.com/rules'] }
+  // Finotive: справочный центр рисуется скриптом в браузере, но для машин он отдаёт
+  // всю справку одним текстом — llms-full.txt (≈300 статей, разделитель «---»,
+  // в каждой «Source: <адрес>»). Плюс официальная страница правил на сайте.
+  { firm: 'Finotive', type: 'multi', parts: [
+    { type: 'llmsfull', url: 'https://help.finotivefunding.com/llms-full.txt' },
+    { type: 'pages', urls: ['https://finotivefunding.com/rules'] }
+  ] }
 ];
 
 function plain(html) {
@@ -87,6 +93,32 @@ async function pages(src) {
     out[url] = { title: title.trim(), url, text };
   }
   return out;
+}
+
+async function llmsfull(src) {
+  const text = await (await get(src.url)).text();
+  const out = {};
+  for (const chunk of text.split(/\n---\n/)) {
+    const title = (chunk.match(/^# (.+)$/m) || [])[1];
+    const url = (chunk.match(/^Source: (\S+)$/m) || [])[1];
+    if (!title || !url) continue;
+    out[url] = { title: title.trim(), url: url.replace(/\.md$/, ''), text: chunk.trim() };
+  }
+  // Меньше сотни статей — это обрезанная отдача, а не «статьи удалили».
+  if (Object.keys(out).length < 100) throw new Error(`${src.url}: прочитал только ${Object.keys(out).length} статей`);
+  return out;
+}
+
+async function fetchFirm(src) {
+  if (src.type === 'zendesk') return zendesk(src);
+  if (src.type === 'pages') return pages(src);
+  if (src.type === 'llmsfull') return llmsfull(src);
+  if (src.type === 'multi') {
+    const out = {};
+    for (const part of src.parts) Object.assign(out, await fetchFirm(part));
+    return out;
+  }
+  throw new Error('неизвестный источник ' + src.type);
 }
 
 function diffText(before, after) {
@@ -154,7 +186,7 @@ async function checkFirm(src) {
 
   let now;
   try {
-    now = src.type === 'zendesk' ? await zendesk(src) : await pages(src);
+    now = await fetchFirm(src);
   } catch (e) {
     await save(src.firm, 'error', `не смог прочитать правила: ${e.message}`);
     return;
