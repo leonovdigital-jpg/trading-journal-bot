@@ -570,7 +570,7 @@ async function buildMorningDigest(now, canaryWarning) {
   const date = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Minsk', day: '2-digit', month: '2-digit' }).format(now);
   const currencies = [...new Set(ASSETS.flatMap(a => ASSET_CURRENCIES[a] || []))];
 
-  const lines = [`🌅 ${weekday[0].toUpperCase() + weekday.slice(1)}, ${date}`, '', `🔴 Красные новости по ${ASSETS.join(', ')}:`];
+  const lines = [`🌅 ${weekday[0].toUpperCase() + weekday.slice(1)}, ${date}`, '', `🔴 Новости, запрещённые правилами пропов (${ASSETS.join(', ')}):`];
   const label = f => (f.accounts.length === 1 && f.accounts[0] === f.name) ? f.name : `${f.name} (${f.accounts.join(', ')})`;
 
   // У каждой фирмы всегда есть итог: «нет», «вот какие» или «не смог узнать».
@@ -623,7 +623,11 @@ async function buildMorningDigest(now, canaryWarning) {
         resolved.push(label(firm));
         continue;
       }
-      status.push(st.text);          // ⏳/❓ — почему календарь фирмы не прочитан
+      // ⏳/❓ — почему календарь фирмы не прочитан. Запасной список по Forex Factory
+      // больше не подставляем: ниже всегда есть общий блок Forex Factory, и список
+      // здесь был бы его повтором (пользователь просил не дублировать).
+      status.push(`${st.text} Пока ориентируйся на блок Forex Factory ниже.`);
+      continue;                      // не «нет» и не сбой — итог даёт строка выше
     }
 
     if (firm.source === 'forexfactory' && !ff) {
@@ -654,6 +658,25 @@ async function buildMorningDigest(now, canaryWarning) {
   }
   for (const n of ruleLines) lines.push(n);
   for (const n of notes) lines.push(n);
+
+  // Постоянный блок Forex Factory — по просьбе пользователя (13.11.2026), отдельно от
+  // правил фирм: общая картина красных новостей по валютам его активов, что бы ни
+  // считала каждая фирма. Одна новость — одна строка.
+  lines.push('', `📰 Forex Factory — красные новости по ${ASSETS.join(', ')}:`);
+  if (!ff) {
+    lines.push(`❓ не смог узнать — Forex Factory не открылся (${ffError})`);
+  } else {
+    const red = new Map();
+    for (const n of redNewsToday(ff, ['High'], currencies, now)) {
+      const key = `${minskTime(n.at)}|${n.country}`;
+      if (!red.has(key)) red.set(key, { time: minskTime(n.at), currency: n.country, titles: [], passed: n.at < now });
+      if (!red.get(key).titles.includes(n.title)) red.get(key).titles.push(n.title);
+    }
+    if (!red.size) lines.push('✅ нет');
+    for (const e of [...red.values()].sort((a, b) => a.time.localeCompare(b.time))) {
+      lines.push(`   ${e.time}  ${e.currency}  ${e.titles.slice(0, 2).join(' / ')}${e.passed ? ' (уже прошла)' : ''}`);
+    }
+  }
 
   // Итог по правилам сервер пишет в таблицу в 08:30, по фирме отдельно. Нет
   // сегодняшнего итога — так и говорим: молчание здесь означало бы «всё спокойно».
