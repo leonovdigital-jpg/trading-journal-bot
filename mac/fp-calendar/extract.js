@@ -26,22 +26,24 @@
   const timeRe = /^\d{1,2}:\d{2}\s*(AM|PM)?$/i;
   const dayRe = /^(Today|Tomorrow|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i;
 
-  // Обходим листья в порядке документа: заголовок дня задаёт день для строк под ним.
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+  // Обходим ТЕКСТ в порядке документа: заголовок дня задаёт день для строк под ним.
+  // Именно текстовые узлы, а не элементы без детей: у FundingPips в ячейку со временем
+  // вложены значки (красная точка, замочек Restricted), и первая версия, искавшая
+  // «листья», не нашла ни одной строки (13.11.2026).
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let day = '';
   const seen = new Set();
-  for (let el = walker.currentNode; el; el = walker.nextNode()) {
-    if (el.children.length) continue;
-    const t = (el.textContent || '').trim();
-    if (!t) continue;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const t = (node.textContent || '').trim();
+    if (!t || !node.parentElement) continue;
     if (dayRe.test(t) && t.length < 30) { day = t; if (!out.days.includes(t)) out.days.push(t); continue; }
     if (!timeRe.test(t)) continue;
 
     // Поднимаемся до строки таблицы: первый предок, где есть код валюты.
-    let row = el;
+    let row = node.parentElement;
     for (let i = 0; i < 8 && row.parentElement; i++) {
-      row = row.parentElement;
       if (text(row).some(l => /^[A-Z]{3}$/.test(l))) break;
+      row = row.parentElement;
     }
     if (seen.has(row)) continue;
     seen.add(row);
@@ -49,7 +51,7 @@
     const icons = [...row.querySelectorAll('svg, img, [aria-label], [title], [data-state], [class*="lock" i], [class*="restrict" i]')]
       .map(n => [
         n.tagName.toLowerCase(),
-        n.getAttribute('class') || '',
+        (n.getAttribute('class') || '').slice(0, 80),
         n.getAttribute('aria-label') || '',
         n.getAttribute('title') || '',
         n.getAttribute('data-state') || '',
