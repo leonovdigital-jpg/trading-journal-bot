@@ -430,12 +430,31 @@ const FIRMS = [
     mark: '*', note: 'Finotive пока не ответила, по какому календарю считает новости' }
 ];
 
+// Forex Factory ограничивает частоту запросов и отвечает 429, если его дёргать
+// часто. Поэтому последняя удачная выгрузка хранится на диске: если утром он не
+// ответил, берём её — это та же неделя, события в ней те же. Копия старше суток
+// не годится: неделя могла смениться.
+const FF_CACHE_FILE = process.env.FF_CACHE_FILE || `${__dirname}/ff-cache.json`;
+
 async function fetchForexFactory() {
-  const r = await axios.get(process.env.FF_URL || 'https://nfs.faireconomy.media/ff_calendar_thisweek.json', {
-    timeout: 20000, headers: { 'User-Agent': 'Mozilla/5.0' }
-  });
-  if (!Array.isArray(r.data)) throw new Error('Forex Factory отдал не список');
-  return r.data;
+  const fs = require('fs');
+  try {
+    const r = await axios.get(process.env.FF_URL || 'https://nfs.faireconomy.media/ff_calendar_thisweek.json', {
+      timeout: 20000, headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    if (!Array.isArray(r.data)) throw new Error('Forex Factory отдал не список');
+    try { fs.writeFileSync(FF_CACHE_FILE, JSON.stringify({ at: Date.now(), events: r.data })); } catch (e) { /* копия — не главное */ }
+    return r.data;
+  } catch (error) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(FF_CACHE_FILE, 'utf8'));
+      if (Date.now() - cached.at < 24 * 3600 * 1000 && Array.isArray(cached.events)) {
+        console.error(`Forex Factory не ответил (${error.message}), беру копию от ${new Date(cached.at).toISOString()}`);
+        return cached.events;
+      }
+    } catch (e) { /* копии нет */ }
+    throw error;
+  }
 }
 
 const minskTime = d => new Intl.DateTimeFormat('ru-RU', {
@@ -534,8 +553,8 @@ async function buildMorningDigest(now, canaryWarning) {
   const lines = [`🌅 ${weekday[0].toUpperCase() + weekday.slice(1)}, ${date}`, '', `🔴 Красные новости по ${ASSETS.join(', ')}:`];
   const label = f => (f.accounts.length === 1 && f.accounts[0] === f.name) ? f.name : `${f.name} (${f.accounts.join(', ')})`;
 
-  // У каждой фирмы всегда ровно один из трёх итогов: «нет», «вот какие», «сбой».
-  // Пустая строка или пропущенная фирма читались бы как «новостей нет».
+  // У каждой фирмы всегда есть итог: «нет», «вот какие» или «не смог узнать».
+  // Пропущенная фирма читалась бы как «новостей нет».
   let ff = null, ffError = null;
   try { ff = await fetchForexFactory(); } catch (e) { ffError = e.message; }
 
@@ -544,36 +563,67 @@ async function buildMorningDigest(now, canaryWarning) {
   if (FIRMS.some(f => f.ownCalendar === 'fundingpips')) {
     try { fp = await fetchFpCalendar(); } catch (e) { fp = { date: today, status: 'error', reason: `таблица не ответила (${e.message})` }; }
   }
+  const nowHM = minskTime(now);
 
+  // Сначала собираем события по фирмам, потом сливаем одинаковые: одна новость
+  // у всех пропов — одна строка (просьба пользователя). Одинаковой считаем новость
+  // с тем же временем и той же валютой: окно запрета считается по времени выхода,
+  // а названия у разных календарей разные (у FundingPips «PPI ex. Food/Energy/…»,
+  // у Forex Factory «Core PPI m/m») при одном и том же релизе.
+  const status = [];                 // строки ⏳/❓ про фирмы, у которых не всё гладко
   const notes = [];
+  const merged = new Map();          // «HH:MM|USD» → { time, currency, titles, firms, passed }
+  const resolved = [];               // фирмы, по которым итог есть (пусть и пустой)
+  let failed = false;
+
+  const add = (firm, mark, ev) => {
+    const key = `${ev.time}|${ev.currency}`;
+    if (!merged.has(key)) merged.set(key, { time: ev.time, currency: ev.currency, titles: [], firms: [], passed: ev.passed });
+    const m = merged.get(key);
+    if (ev.title && !m.titles.includes(ev.title)) m.titles.push(ev.title);
+    if (!m.firms.includes(firm.name + mark)) m.firms.push(firm.name + mark);
+  };
+
   for (const firm of FIRMS) {
-    const mark = firm.mark || '';
-    let indent = '';
+    let mark = firm.mark || '';
 
     if (firm.ownCalendar === 'fundingpips') {
       digestFpKey = fp && fp.date === today ? fpKey(fp) : '';
       const st = fpCalendarLine(fp, today, currencies, label(firm));
-      lines.push(st.text);
-      if (st.final) continue;
-      indent = '   пока ';                                   // дальше — запасной список
+      if (st.final) {
+        const { lockSeen, restricted, mine } = fpEventsToday(fp, currencies);
+        if (!lockSeen && mine.length) status.push(`❓ ${label(firm)}: метку Restricted в календаре не распознал — ниже все его события по твоим валютам`);
+        for (const e of (lockSeen ? restricted : mine)) add(firm, '', { ...e, passed: e.time < nowHM });
+        resolved.push(label(firm));
+        continue;
+      }
+      status.push(st.text);          // ⏳/❓ — почему календарь фирмы не прочитан
     }
 
-    if (firm.note && !notes.includes(`${mark} ${firm.note}`)) notes.push(`${mark} ${firm.note}`);
     if (firm.source === 'forexfactory' && !ff) {
-      lines.push(`${indent || '❓ '}${indent ? '' : label(firm) + ': '}не смог узнать — ${firm.calendar} не открылся (${ffError})`);
+      status.push(`❓ ${label(firm)}: не смог узнать — ${firm.calendar} не открылся (${ffError})`);
+      failed = true;
       continue;
     }
-    const news = redNewsToday(ff, firm.impacts, firm.allCurrencies ? null : currencies, now);
-    if (indent) {
-      if (!news.length) { lines.push(`${indent}по ${firm.calendar}${mark}: нет`); continue; }
-      lines.push(`${indent}по ${firm.calendar}${mark}:`);
-    } else {
-      if (!news.length) { lines.push(`✅ ${label(firm)}: нет — по ${firm.calendar}${mark}`); continue; }
-      lines.push(`🔴 ${label(firm)}, по ${firm.calendar}${mark}:`);
+    if (firm.note && !notes.includes(`${mark} ${firm.note}`)) notes.push(`${mark} ${firm.note}`);
+    resolved.push(label(firm));
+    for (const n of redNewsToday(ff, firm.impacts, firm.allCurrencies ? null : currencies, now)) {
+      add(firm, mark, { time: minskTime(n.at), currency: n.country, title: n.title, passed: n.at < now });
     }
-    for (const n of news) {
-      const passed = n.at < now ? ' — уже прошла' : '';
-      lines.push(`${indent ? '      ' : '   '}${minskTime(n.at)}  ${n.country}  ${n.title}${passed}`);
+  }
+
+  for (const st of status) lines.push(st);
+  const events = [...merged.values()].sort((a, b) => a.time.localeCompare(b.time));
+  if (!events.length) {
+    if (!failed) lines.push('✅ Нет — ни у одной фирмы');
+    else for (const name of resolved) lines.push(`✅ ${name}: нет`);
+  } else {
+    const allNames = FIRMS.map(f => f.name);
+    for (const e of events) {
+      const everyone = allNames.every(n => e.firms.some(f => f.replace(/[≈*]$/, '') === n));
+      const who = everyone ? 'у всех' : `только ${e.firms.join(', ')}`;
+      const title = e.titles.slice(0, 2).join(' / ');
+      lines.push(`   ${e.time}  ${e.currency}  ${title} — ${who}${e.passed ? ' (уже прошла)' : ''}`);
     }
   }
   for (const n of notes) lines.push(n);
@@ -752,7 +802,20 @@ async function announceFpCalendar() {
   markFpAnnounced(key);
 }
 
+// Копию Forex Factory обновляем заранее, раз в три часа: если в 09:00 он ответит
+// отказом, у сводки уже будет свежая копия той же недели. Чаще нельзя — он сам
+// ограничивает частоту запросов.
+let ffTimer = null;
+function startForexFactoryRefresh() {
+  if (ffTimer) return;
+  const refresh = () => fetchForexFactory().catch(e => console.error('Forex Factory (фоновое обновление):', e.message));
+  refresh();
+  ffTimer = setInterval(refresh, 3 * 3600 * 1000);
+  ffTimer.unref();
+}
+
 function startWatchdog() {
+  startForexFactoryRefresh();
   if (!reportsTimer) {
     reportsTimer = setInterval(() => {
       deliverReports().catch(() => {});
