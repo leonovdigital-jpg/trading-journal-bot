@@ -1093,10 +1093,11 @@ const ENTRY_TFS = ['5m', '1h', '4h', '1d'];
 const DXY_TFS = ['1h', '4h', '1d'];
 
 const ADD_BUTTON = '➕ Аккаунт';
+const RULES_BUTTON = '📋 Правила';
 
 function entryKeyboard() {
   return {
-    keyboard: [[{ text: ENTRY_BUTTON }, { text: ADD_BUTTON }]],
+    keyboard: [[{ text: ENTRY_BUTTON }, { text: ADD_BUTTON }], [{ text: RULES_BUTTON }]],
     resize_keyboard: true, is_persistent: true
   };
 }
@@ -1362,6 +1363,60 @@ bot.start((ctx) => {
 
 // Дублёр кнопки: ВХОД — reply-клавиатура, её Telegram иногда сворачивает в иконку.
 // Команда всегда доступна из синего меню рядом с полем ввода.
+// «📋 Правила»: по каждому счёту — только то, за что фирма закроет счёт или срежет
+// выплату. Карточки собирает сервер из официальных текстов фирм (vps/rules-cards.js)
+// и пересобирает сам, когда фирма меняет правила.
+const RULES_ORDER = ['FundingPips', 'Instant', '100k challenge'];
+
+async function loadRulesCards() {
+  const r = await sheetsPost({ action: 'getRulesCards' });
+  const cards = (r && Array.isArray(r.data)) ? r.data : [];
+  return cards.sort((a, b) => {
+    const ia = RULES_ORDER.indexOf(a.account), ib = RULES_ORDER.indexOf(b.account);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+}
+
+function rulesCardText(card) {
+  const when = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Minsk', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+  }).format(new Date(card.generatedAt));
+  return `📋 ${card.account} (${card.firm}) — за что закроют счёт или срежут выплату\n\n${card.text}\n\n` +
+    `Собрано ${when} из официальных текстов фирмы (${card.sources} стр.). Пересобирается само, когда фирма меняет правила.`;
+}
+
+async function showRulesMenu(ctx) {
+  let cards;
+  try { cards = await loadRulesCards(); } catch (e) {
+    await ctx.reply(`❓ Не смог достать правила из таблицы: ${e.message}`);
+    return;
+  }
+  if (!cards.length) { await ctx.reply('❓ Карточек правил ещё нет — сервер их не собрал.'); return; }
+  const rows = cards.map((c, i) => [{ text: `${c.account} · ${c.firm}`, callback_data: `rules_${i}` }]);
+  rows.push([{ text: 'Все счета', callback_data: 'rules_all' }]);
+  await ctx.reply('По какому счёту показать правила?', { reply_markup: { inline_keyboard: rows } });
+}
+
+bot.command('pravila', async (ctx) => { await showRulesMenu(ctx); });
+
+bot.action(/^rules_(\d+|all)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  let cards;
+  try { cards = await loadRulesCards(); } catch (e) {
+    await ctx.reply(`❓ Не смог достать правила из таблицы: ${e.message}`);
+    return;
+  }
+  const which = ctx.match[1];
+  const chosen = which === 'all' ? cards : [cards[Number(which)]].filter(Boolean);
+  if (!chosen.length) { await ctx.reply('❓ Такой карточки больше нет — открой «📋 Правила» заново.'); return; }
+  for (const card of chosen) {
+    // Без разметки: в текстах правил бывают «_» и «*». Длинную памятку режем по абзацам.
+    for (const part of splitMessage(rulesCardText(card))) {
+      await ctx.reply(part, { disable_web_page_preview: true });
+    }
+  }
+});
+
 bot.command('vhod', async (ctx) => { await startEntry(ctx); });
 bot.command('dobor', async (ctx) => { await startAddAccount(ctx); });
 bot.command('vxod', async (ctx) => { await startEntry(ctx); });
@@ -1593,6 +1648,11 @@ bot.on('text', async (ctx) => {
 
     if (text.trim() === ADD_BUTTON) {
       await startAddAccount(ctx);
+      return;
+    }
+
+    if (text.trim() === RULES_BUTTON) {
+      await showRulesMenu(ctx);
       return;
     }
 
@@ -2055,6 +2115,7 @@ if (require.main === module) app.listen(PORT, async () => {
   bot.telegram.setMyCommands([
     { command: 'vhod', description: '🧨 Начать вход в сделку' },
     { command: 'dobor', description: '➕ Добавить аккаунт в открытую сделку' },
+    { command: 'pravila', description: '📋 За что закроют счёт или срежут выплату' },
     { command: 'closetrade', description: 'Закрыть сделку' },
     { command: 'stats', description: 'Балансы и месяц по пропам' },
     { command: 'balance', description: 'Поправить баланс пропа' },

@@ -225,6 +225,14 @@ async function checkFirm(src) {
   }
   await save(src.firm, 'changed', `${summary}\n${list}`);
   fs.writeFileSync(file, JSON.stringify(now));
+
+  // Правила поменялись — карточки «📋 Правила» этой фирмы пересобираем по новым текстам.
+  // Сбой здесь не отменяет утреннюю сводку: она уже записана выше.
+  try {
+    execFileSync('node', [path.join(__dirname, 'rules-cards.js'), src.firm], { encoding: 'utf8', timeout: 2400000, stdio: 'inherit' });
+  } catch (e) {
+    console.error(`${src.firm}: карточки правил не пересобрались: ${e.message}`);
+  }
 }
 
 async function main() {

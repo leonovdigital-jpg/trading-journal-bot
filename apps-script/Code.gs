@@ -205,6 +205,8 @@ function doPost(e) {
     if (data.action === 'setRulesDigest') return setRulesDigest(data);
     if (data.action === 'getRulesDigest') return getRulesDigest();
     if (data.action === 'setFpCalendar') return setFpCalendar(data);
+    if (data.action === 'setRulesCard')  return setRulesCard(ss, data);
+    if (data.action === 'getRulesCards') return getRulesCards(ss);
     if (data.action === 'getFpCalendar') return getFpCalendar();
     if (data.action === 'markReportSent') return markReportSent(ss, data);
     if (data.action === 'headers')       { buildHeaders(sheet); return createResponse(true, 'headers rebuilt'); }
@@ -626,6 +628,59 @@ function getRulesDigest() {
     if (k.indexOf(RULES_PREFIX) === 0) out.push(JSON.parse(all[k]));
   }
   return createResponse(true, 'сводка', out);
+}
+
+/*** Карточки правил по счетам ***/
+
+// Памятка «за что закроют счёт или срежут выплату» — по одной на счёт. Собирает
+// сервер из официальных текстов фирм, показывает бот по кнопке «📋 Правила».
+// Лежит на листе, а не в свойствах скрипта: свойство держит 9 КБ, а памятка по счёту
+// с двумя наборами правил (оценка и Master) в него не влезала и обрезалась на
+// самом важном — «что режет выплату».
+var RULES_SHEET = 'Правила';
+
+function ensureRulesSheet(ss) {
+  var sheet = ss.getSheetByName(RULES_SHEET);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(RULES_SHEET);
+  sheet.getRange(1, 1, 1, 5).setValues([['Счёт', 'Фирма', 'Источников', 'Собрано', 'Памятка']]).setFontWeight('bold');
+  sheet.setColumnWidth(5, 800);
+  sheet.setFrozenRows(1);
+  return sheet;
+}
+
+function setRulesCard(ss, data) {
+  var account = String(data.account || '').trim();
+  var text = String(data.text || '').trim();
+  if (!account || !text) return createResponse(false, 'нет счёта или текста');
+  var sheet = ensureRulesSheet(ss);
+  var row = [account, String(data.firm || ''), Number(data.sources || 0),
+             String(data.generatedAt || new Date().toISOString()), text.slice(0, 20000)];
+  var last = sheet.getLastRow();
+  var names = last > 1 ? sheet.getRange(2, 1, last - 1, 1).getValues() : [];
+  for (var i = 0; i < names.length; i++) {
+    if (String(names[i][0]) === account) {
+      sheet.getRange(i + 2, 1, 1, 5).setValues([row]);
+      sheet.getRange(i + 2, 5).setWrap(true).setVerticalAlignment('top');
+      return createResponse(true, 'карточка обновлена');
+    }
+  }
+  sheet.appendRow(row);
+  sheet.getRange(sheet.getLastRow(), 5).setWrap(true).setVerticalAlignment('top');
+  return createResponse(true, 'карточка добавлена');
+}
+
+function getRulesCards(ss) {
+  var sheet = ss.getSheetByName(RULES_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return createResponse(true, 'карточки', []);
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+  var out = [];
+  for (var i = 0; i < values.length; i++) {
+    if (isEmpty(values[i][0])) continue;
+    out.push({ account: String(values[i][0]), firm: String(values[i][1]), sources: Number(values[i][2]),
+               generatedAt: String(values[i][3]), text: String(values[i][4]) });
+  }
+  return createResponse(true, 'карточки', out);
 }
 
 /*** Календарь FundingPips с Мака ***/
