@@ -38,6 +38,9 @@
     if (!t || !node.parentElement) continue;
     if (dayRe.test(t) && t.length < 30) { day = t; if (!out.days.includes(t)) out.days.push(t); continue; }
     if (!timeRe.test(t)) continue;
+    // Только сегодня: при всех уровнях важности на день бывают десятки строк,
+    // а нужны лишь сегодняшние.
+    if (day && !/^today/i.test(day)) continue;
 
     // Поднимаемся до строки таблицы: первый предок, где есть код валюты.
     let row = node.parentElement;
@@ -56,9 +59,9 @@
         n.getAttribute('title') || '',
         n.getAttribute('data-state') || '',
         n.getAttribute('data-testid') || ''
-      ].join('~').slice(0, 160));
+      ].join('~').slice(0, 120));
 
-    out.rows.push({ day, text: text(row).slice(0, 8).join(' | ').slice(0, 220), icons: icons.slice(0, 8) });
+    out.rows.push({ day, text: text(row).slice(0, 6).join(' | ').slice(0, 160), icons: [...new Set(icons)].slice(0, 5) });
     if (!out.sample) out.sample = row.outerHTML.replace(/\s+/g, ' ').slice(0, 2500);
   }
 

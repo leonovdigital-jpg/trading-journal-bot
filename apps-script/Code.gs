@@ -703,15 +703,29 @@ function setFpCalendar(data) {
     data: data.data || null
   };
   var value = JSON.stringify(payload);
-  // Предел свойства 9 КБ: сначала жертвуем образцом разметки, он нужен только для отладки.
-  if (value.length > 8500 && payload.data) { payload.data.sample = ''; value = JSON.stringify(payload); }
-  if (value.length > 8500) return createResponse(false, 'слишком большой календарь: ' + value.length);
-  PropertiesService.getScriptProperties().setProperty('FP_CALENDAR', value);
+  // Ячейка листа, а не свойство скрипта: свойство держит 9 КБ, а за день в календаре
+  // бывают десятки строк со значками. В ячейку влезает 50 000 знаков; сначала
+  // жертвуем образцом разметки — он нужен только для отладки.
+  if (value.length > 45000 && payload.data) { payload.data.sample = ''; value = JSON.stringify(payload); }
+  if (value.length > 45000) return createResponse(false, 'слишком большой календарь: ' + value.length);
+  fpCalendarCell(true).setValue(value);
   return createResponse(true, 'календарь сохранён');
 }
 
+function fpCalendarCell(create) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Календарь FP');
+  if (!sheet) {
+    if (!create) return null;
+    sheet = ss.insertSheet('Календарь FP');
+    sheet.getRange(1, 2).setValue('← последнее чтение календаря FundingPips с Мака (служебное)');
+  }
+  return sheet.getRange(1, 1);
+}
+
 function getFpCalendar() {
-  var raw = PropertiesService.getScriptProperties().getProperty('FP_CALENDAR');
+  var cell = fpCalendarCell(false);
+  var raw = cell ? String(cell.getValue() || '') : '';
   return createResponse(true, 'календарь', raw ? JSON.parse(raw) : null);
 }
 
