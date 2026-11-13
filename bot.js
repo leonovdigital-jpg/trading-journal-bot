@@ -487,8 +487,19 @@ function to24h(s) {
 // Что в строке означает метку Restricted (замочек), видно только по настоящей
 // странице — кабинет закрыт, разметку снаружи не посмотреть. Мак присылает все
 // значки строки, а решаем здесь: правка не требует трогать Мак.
+// Первое настоящее чтение (13.11.2026) показало разметку: важность события — в кнопке
+// с aria-label «Low Impact» / «Medium Impact» / «High Impact». Сам замочек тогда
+// не попался — после 18:30 в календаре остались только низкие и средние события.
+// FundingPips в справке пишут, что метку Restricted получают high-impact новости и
+// речи, поэтому запретным считаем событие с замочком ИЛИ с High Impact.
+// «lock» — только отдельным словом: в каждой строке есть CSS-класс «inline-block»,
+// и простое /lock/ находило в нём «замочек» — все строки выходили запретными.
 function fpRestricted(row) {
-  return (row.icons || []).some(i => /lock|restrict/i.test(i));
+  return (row.icons || []).some(i => /\block\b|restrict|~High Impact~/i.test(i));
+}
+
+function fpImpactKnown(row) {
+  return (row.icons || []).some(i => /~(Low|Medium|High) Impact~/i.test(i));
 }
 
 function fpEventsToday(fp, currencies) {
@@ -501,12 +512,15 @@ function fpEventsToday(fp, currencies) {
       return {
         time: to24h(parts[0]),
         currency: ci >= 0 ? parts[ci] : '',
-        title: ci >= 0 ? (parts[ci + 1] || '') : parts.slice(1).join(' '),
+        // В ячейке названия через табуляцию идут ещё «прошлое» и «прогноз».
+        title: (ci >= 0 ? (parts[ci + 1] || '') : parts.slice(1).join(' ')).split('\t')[0].trim(),
         restricted: fpRestricted(r)
       };
     });
   return {
-    lockSeen: rows.some(fpRestricted),
+    // Разметку понимаем, если видим важность или замочек. Только тогда «нет запретных»
+    // значит «нет», а не «не распознал».
+    lockSeen: rows.some(r => fpRestricted(r) || fpImpactKnown(r)),
     restricted: parsed.filter(e => e.restricted && currencies.includes(e.currency)),
     mine: parsed.filter(e => currencies.includes(e.currency))
   };
@@ -518,7 +532,7 @@ function fpCalendarLine(fp, today, currencies, label) {
   if (!fp || fp.date !== today) {
     return { final: false, text: `⏳ ${label}: календарь FundingPips ещё не прочитан — Мак сегодня ещё не включался. Дочитаю, как проснётся — до открытия Лондона.` };
   }
-  const list = evs => evs.map(e => `   ${e.time}  ${e.currency}  ${e.title}`);
+  const list = evs => [...evs].sort((a, b) => a.time.localeCompare(b.time)).map(e => `   ${e.time}  ${e.currency}  ${e.title}`);
   if (fp.status === 'ok') {
     const { lockSeen, restricted, mine } = fpEventsToday(fp, currencies);
     if (!lockSeen && mine.length) {
