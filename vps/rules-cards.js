@@ -8,6 +8,7 @@
 //
 //   node rules-cards.js                 — пересобрать все карточки
 //   node rules-cards.js FundingPips     — только счета этой фирмы (так зовёт rules-check)
+//   node rules-cards.js "100k challenge" — только один счёт
 
 const fs = require('fs');
 const path = require('path');
@@ -16,8 +17,9 @@ const { post } = require('./sheets.js');
 
 const DIR = path.join(__dirname, 'rules');
 
-// Счета пользователя. plan и stage известны не везде — тогда карточка честно
-// покрывает все варианты и пишет, что тип счёта нужно уточнить.
+// Счета пользователя. Типы подтвердил пользователь 13.11.2026: Instant — Lite,
+// 100k challenge — Two Step. Явно просим не включать чужие варианты: иначе памятка
+// раздувается правилами, которые к счёту не относятся.
 const ACCOUNTS = [
   {
     account: 'FundingPips', firm: 'FundingPips', size: '100 000 $',
@@ -29,17 +31,17 @@ const ACCOUNTS = [
   },
   {
     account: 'Instant', firm: 'Finotive', size: '50 000 $',
-    plan: 'Instant Funding (Standard, Lite или Pro — не уточнено)', stage: 'funded',
+    plan: 'Instant Funding Lite (именно Lite — правила Standard и Pro не включай)', stage: 'funded',
     bought: 'до 15.09.2026',
     pick: a => /instant|prohibited|straddl|hedg|copier|expert advisor|scalping|high-frequency|liquidity|consistency|drawdown|breach|strike|reward payment|payout|profit concentration|over-sizing|inactiv|weekend|terms|rules/i.test(a.title + ' ' + a.url),
-    note: 'Поддержка Finotive: изменения правил с 1 октября касаются только счетов, купленных после 1 октября. Счёт куплен раньше, а на сайте — уже новая версия правил.'
+    note: 'Поддержка Finotive 13.11.2026: правила из Terms действуют на этот счёт, включая 7.15 Profit Concentration и 7.9 News Straddling; новые правила в Terms помечаются как новые. FAQ и Terms описывают одно и то же. Оговорку про дату покупки не пиши.'
   },
   {
     account: '100k challenge', firm: 'Finotive', size: '100 000 $',
-    plan: 'Challenge (One Step, Two Step или Solo — не уточнено)', stage: 'evaluation',
+    plan: 'Two Step Challenge (именно Two Step — правила One Step и Solo не включай)', stage: 'evaluation (Phase 1 или 2; после прохождения — funded, его правила дай отдельным блоком)',
     bought: 'до 15.09.2026',
     pick: a => /challenge|one step|two step|solo|prohibited|straddl|hedg|copier|expert advisor|scalping|high-frequency|liquidity|consistency|drawdown|breach|strike|inactiv|weekend|terms|rules/i.test(a.title + ' ' + a.url),
-    note: 'Поддержка Finotive: изменения правил с 1 октября касаются только счетов, купленных после 1 октября. Счёт куплен раньше, а на сайте — уже новая версия правил.'
+    note: 'Поддержка Finotive 13.11.2026: правила из Terms действуют на этот счёт, включая 7.9 News Straddling; новые правила в Terms помечаются как новые. Оговорку про дату покупки не пиши. 7.15 Profit Concentration по тексту Terms действует только для Instant Funding Standard и Lite — в эту памятку его не включай.'
   }
 ];
 
@@ -83,22 +85,28 @@ async function main() {
   let failed = 0;
 
   for (const acc of ACCOUNTS) {
-    if (only && acc.firm !== only) continue;
+    if (only && acc.firm !== only && acc.account !== only) continue;
     if (!snaps[acc.firm]) {
       snaps[acc.firm] = Object.values(JSON.parse(fs.readFileSync(path.join(DIR, `${acc.firm}.json`), 'utf8')));
     }
     const sources = snaps[acc.firm].filter(acc.pick);
     if (!sources.length) { console.error(`${acc.account}: не нашёл ни одной статьи с правилами`); failed++; continue; }
 
-    let text;
-    try {
-      // Подсказку отдаём через stdin: тексты справки бывают на сотни килобайт.
-      text = execFileSync('claude', ['-p', '--model', 'opus', '--disallowedTools', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task'], {
-        input: buildPrompt(acc, sources), encoding: 'utf8', timeout: 900000, maxBuffer: 10 * 1024 * 1024
-      }).trim();
-    } catch (e) {
-      console.error(`${acc.account}: Claude не собрал карточку: ${e.message}`); failed++; continue;
+    // Подсказку отдаём через stdin: тексты справки бывают на сотни килобайт.
+    // Две попытки: 13.11 вторая карточка подряд упала сразу, без объяснения.
+    let text = '';
+    for (let attempt = 1; attempt <= 2 && !text; attempt++) {
+      try {
+        text = execFileSync('claude', ['-p', '--model', 'opus', '--disallowedTools', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task'], {
+          input: buildPrompt(acc, sources), encoding: 'utf8', timeout: 900000, maxBuffer: 10 * 1024 * 1024
+        }).trim();
+      } catch (e) {
+        const why = String(e.stderr || e.stdout || e.message).replace(/\s+/g, ' ').slice(0, 400);
+        console.error(`${acc.account}: попытка ${attempt} — Claude не собрал карточку: ${why}`);
+        if (attempt < 2) execFileSync('sleep', ['60']);
+      }
     }
+    if (!text) { failed++; continue; }
     if (text.length > LIMIT) text = text.slice(0, LIMIT).replace(/\n[^\n]*$/, '') + '\n…(обрезано)';
 
     const r = await post({
