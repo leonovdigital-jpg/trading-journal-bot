@@ -35,10 +35,13 @@ const FIRMS = [
   // Finotive: справочный центр рисуется скриптом в браузере, но для машин он отдаёт
   // всю справку одним текстом — llms-full.txt (≈300 статей, разделитель «---»,
   // в каждой «Source: <адрес>»). Плюс официальная страница правил на сайте.
+  // Поддержка Finotive 13.11.2026: правила публикуются в FAQ, в кабинете и в Terms;
+  // изменения с 1 октября касаются только счетов, купленных после 1 октября.
   { firm: 'Finotive', type: 'multi', parts: [
     { type: 'llmsfull', url: 'https://help.finotivefunding.com/llms-full.txt' },
-    { type: 'pages', urls: ['https://finotivefunding.com/rules'] }
-  ] }
+    { type: 'pages', urls: ['https://finotivefunding.com/rules', 'https://finotivefunding.com/terms-and-conditions'] }
+  ],
+    context: 'Важно: по словам поддержки этой фирмы, изменения правил касаются только счетов, купленных после даты изменения. Счета трейдера у этой фирмы куплены в сентябре 2026, до 1 октября. Скажи одной фразой в конце, касается ли правка его счетов или только новых.' }
 ];
 
 function plain(html) {
