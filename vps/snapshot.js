@@ -289,6 +289,29 @@ async function setScaleSeriesOnly(page, value) {
   }, value);
 }
 
+// Синие памятки пользователя («ВХОД M5 +тест…», лоты по счетам) — текстовые рисунки
+// с синей заливкой rgba(41, 98, 255, …). Они привязаны к последним свечам и в кадре
+// ложатся ровно на место входа. Сдвигом графика их не убрать: рисунок едет вместе
+// со свечами. Поэтому на время кадра прячем, потом возвращаем (просьба 14.11.2026).
+// Надписи другого цвета не трогаем — они могут относиться к самой сделке.
+// Рисунки привязаны к символу, поэтому прячем и возвращаем в пределах одного символа.
+async function setBlueNotes(page, visible, ids) {
+  return page.evaluate(({ visible, ids }) => {
+    try {
+      const chart = window.TradingViewApi.activeChart();
+      const targets = ids || (chart.getAllShapes() || [])
+        .filter(s => /text|note|callout|balloon|comment/i.test(s.name))
+        .filter(s => {
+          const pr = chart.getShapeById(s.id).getProperties() || {};
+          return pr.visible !== false && /41,\s*98,\s*255|#2962ff/i.test(String(pr.backgroundColor || ''));
+        })
+        .map(s => s.id);
+      for (const id of targets) chart.setEntityVisibility(id, visible);
+      return targets;
+    } catch (e) { return []; }
+  }, { visible, ids: ids || null });
+}
+
 // Проверка, что сессия жива: у гостя TradingView рисует кнопку входа.
 async function isLoggedIn(page) {
   return (await page.locator("#header-toolbar-symbol-search").count()) > 0
@@ -325,9 +348,11 @@ async function takeSnapshots(symbols, opts = {}) {
   }
 
   let scaleRestore = null;           // флаг масштаба, который надо вернуть, если съёмка упадёт
+  let notesHidden = [];              // спрятанные синие памятки текущего символа
   try {
   for (const symbol of symbols) {
     await setSymbol(page, symbol);
+    notesHidden = await setBlueNotes(page, false).catch(() => []);
 
     // План сделки читаем только по основному инструменту: на DXY позиции нет.
     if (symbol === symbols[0]) {
@@ -393,6 +418,8 @@ async function takeSnapshots(symbols, opts = {}) {
       out[symbol + " " + name] = "https://www.tradingview.com/x/" + id + "/";
       if (scalePrev !== null) { await setScaleSeriesOnly(page, scalePrev).catch(() => {}); scaleRestore = null; }   // вернуть, как было у пользователя
     }
+    // Памятки возвращаем, пока ещё на этом символе: рисунки другого символа не видны.
+    if (notesHidden.length) { await setBlueNotes(page, true, notesHidden).catch(() => {}); notesHidden = []; }
   }
 
   // Возвращаем график туда, где работает пользователь: его символ на 5 минутах.
@@ -407,6 +434,7 @@ async function takeSnapshots(symbols, opts = {}) {
 
   } finally {
     if (scaleRestore !== null) await setScaleSeriesOnly(page, scaleRestore).catch(() => {});
+    if (notesHidden.length) await setBlueNotes(page, true, notesHidden).catch(() => {});
     for (const name of hidden) {
       await setIndicator(page, name, true).catch(() => {});
     }
