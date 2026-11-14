@@ -274,6 +274,21 @@ async function readPosition(page) {
   });
 }
 
+// «Масштабировать только по графику цены». Без неё автомасштаб вмещает и линии
+// индикаторов: на 5-минутке 12.11 недельный уровень W на 0.819 и пунктирные уровни
+// растянули шкалу USDCHF до 0.817–0.834 при свечах в 0.831–0.833, и свечи сплющило
+// в полоску (сделки 116 и 117). Возвращает прежнее значение, чтобы его восстановить.
+async function setScaleSeriesOnly(page, value) {
+  return page.evaluate(v => {
+    try {
+      const chart = window.TradingViewApi.activeChart();
+      const prev = chart.chartModel().properties().childs().scalesProperties.childs().scaleSeriesOnly.value();
+      chart.applyOverrides({ "scalesProperties.scaleSeriesOnly": v });
+      return prev === true;
+    } catch (e) { return null; }
+  }, value);
+}
+
 // Проверка, что сессия жива: у гостя TradingView рисует кнопку входа.
 async function isLoggedIn(page) {
   return (await page.locator("#header-toolbar-symbol-search").count()) > 0
@@ -309,6 +324,7 @@ async function takeSnapshots(symbols, opts = {}) {
     await page.waitForTimeout(1200);
   }
 
+  let scaleRestore = null;           // флаг масштаба, который надо вернуть, если съёмка упадёт
   try {
   for (const symbol of symbols) {
     await setSymbol(page, symbol);
@@ -323,6 +339,10 @@ async function takeSnapshots(symbols, opts = {}) {
 
     for (const name of symbolTfs) {
       await setInterval_(page, pane, TF_KEYS[name]);
+      // Только 5-минутка: на ней кадр — один сегодняшний день, и далёкие уровни
+      // индикаторов давят свечи. На старших ТФ эти уровни — нужный контекст.
+      const scalePrev = name === "5m" ? await setScaleSeriesOnly(page, true).catch(() => null) : null;
+      if (scalePrev !== null) scaleRestore = scalePrev;
       await page.keyboard.press("Alt+r");          // вернуть вид к последним барам (и масштаб)
       await page.waitForTimeout(2500);             // даём разметке дорисоваться
 
@@ -371,6 +391,7 @@ async function takeSnapshots(symbols, opts = {}) {
       }
 
       out[symbol + " " + name] = "https://www.tradingview.com/x/" + id + "/";
+      if (scalePrev !== null) { await setScaleSeriesOnly(page, scalePrev).catch(() => {}); scaleRestore = null; }   // вернуть, как было у пользователя
     }
   }
 
@@ -385,6 +406,7 @@ async function takeSnapshots(symbols, opts = {}) {
   return out;
 
   } finally {
+    if (scaleRestore !== null) await setScaleSeriesOnly(page, scaleRestore).catch(() => {});
     for (const name of hidden) {
       await setIndicator(page, name, true).catch(() => {});
     }
