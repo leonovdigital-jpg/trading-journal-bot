@@ -442,9 +442,6 @@ const ASSET_CURRENCIES = {
   UK100: ['GBP'],
   USDCHF: ['USD', 'CHF'],
   XAUUSD: ['USD'],
-  // DAX — немецкий индекс, его двигают новости по EUR. FundingPips про индексы
-  // подтвердили только UK100 → GBP; для GER40 это то же правило по аналогии.
-  GER40: ['EUR'],
   US30: ['USD']
 };
 
@@ -1170,7 +1167,7 @@ function sessionKeyboard() {
 // незаконченный опрос и начинает заново.
 const ENTRY_BUTTON = 'ВХОД';
 const AGAINST_QUESTION = '🧨🧨 Аргументы против?';
-const ASSETS = (process.env.ASSETS || 'UK100,USDCHF,XAUUSD,GER40').split(',').map(x => x.trim()).filter(Boolean);
+const ASSETS = (process.env.ASSETS || 'UK100,USDCHF,XAUUSD').split(',').map(x => x.trim()).filter(Boolean);
 // Скрин входа бот снимает сам: 5 минут (в пределах сегодняшнего дня), 1h, 4h, 1d.
 // У DXY пятиминутка не нужна — в журнале под него только три колонки.
 const ENTRY_TFS = ['5m', '1h', '4h', '1d'];

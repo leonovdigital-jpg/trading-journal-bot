@@ -16,7 +16,7 @@
 
 В ответе `data.trades` — массив сделок. Поля:
 
-- `openedAt`, `day`, `session` (LO / NY / NYSE / Asia), `pair` (UK100, USDCHF, XAUUSD, GER40; в старых сделках бывает US30)
+- `openedAt`, `day`, `session` (LO / NY / NYSE / Asia), `pair` (UK100, USDCHF, US30, XAUUSD)
 - `grade` — класс позиции, который он сам поставил: A, A (-), B, C
 - `against` — что он написал в поле «аргументы против входа» ПЕРЕД входом
 - `notes` — его разбор ПОСЛЕ сделки: ошибки и выводы
@@ -57,7 +57,7 @@
    не выдумывай числа.
 2. Возьми котировки:
    `curl -s -A 'Mozilla/5.0' 'https://query1.finance.yahoo.com/v8/finance/chart/SYMBOL?interval=5m&range=1mo'`
-   Символы: UK100 → `%5EFTSE`, USDCHF → `CHF=X`, XAUUSD → `GC=F`, GER40 → `%5EGDAXI`, US30 → `YM=F`.
+   Символы: UK100 → `%5EFTSE`, USDCHF → `CHF=X`, XAUUSD → `GC=F`, US30 → `YM=F`.
    В ответе `chart.result[0].timestamp` (unix, UTC) и `chart.result[0].indicators.quote[0]`
    с `high` / `low` / `close`.
 3. ВАЖНО: это другие инструменты, цены смещены. Посчитай поправку: цена фида на момент
