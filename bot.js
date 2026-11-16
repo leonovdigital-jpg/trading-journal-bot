@@ -92,11 +92,54 @@ function restoreStates() {
 // по requestId (скрипт вернёт сохранённый ответ, а не запишет второй раз).
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Часть серверов Google из облака Oracle бывает недоступна: 16.11.2026 адрес
+// 142.251.14.132 молчал, а соседние .101/.138 отвечали за 0.16 с. DNS отдаёт сразу
+// несколько адресов, а Node берёт первый — все три повтора стучались в один и тот же
+// мёртвый, и пользователь получил «Не могу прочитать журнал». Поэтому адрес выбираем
+// сами: случайный из всех, кроме тех, что недавно не ответили. Только IPv4 — IPv6 у
+// сервера нет, и попытки по нему лишь добавляли ENETUNREACH.
+const dns = require('dns');
+const https = require('https');
+const badIps = new Map();                   // адрес → до какого момента его не трогать
+const BAD_IP_MS = 30 * 60 * 1000;
+
+function markBadIp(error) {
+  const until = Date.now() + BAD_IP_MS;
+  for (const e of [error, ...((error && error.errors) || [])]) {
+    if (e && e.address && /\./.test(e.address) && /ETIMEDOUT|ECONNREFUSED|EHOSTUNREACH|ECONNRESET/.test(e.code || '')) {
+      badIps.set(e.address, until);
+    }
+  }
+  for (const m of String((error && error.message) || '').matchAll(/(?:ETIMEDOUT|ECONNREFUSED|EHOSTUNREACH) (\d+\.\d+\.\d+\.\d+):\d+/g)) {
+    badIps.set(m[1], until);
+  }
+}
+
+// Отдаём Node ВСЕ адреса: живые в случайном порядке, недавно не ответившие — в конце.
+// Node (autoSelectFamily) сам переходит к следующему адресу, если текущий молчит
+// дольше ~250 мс, так что мёртвый адрес стоит доли секунды, а не таймаут целиком.
+// Отдать один адрес было бы хуже: если он мёртвый, соединение висит до системного
+// таймаута.
+function lookupAvoidingBad(hostname, options, callback) {
+  dns.lookup(hostname, { all: true, family: 4 }, (err, addrs) => {
+    if (err) return callback(err);
+    const now = Date.now();
+    const shuffle = list => list.map(a => [Math.random(), a]).sort((x, y) => x[0] - y[0]).map(x => x[1]);
+    const good = shuffle(addrs.filter(a => !(badIps.get(a.address) > now)));
+    const bad = addrs.filter(a => badIps.get(a.address) > now);
+    const ordered = [...good, ...bad].map(a => ({ address: a.address, family: 4 }));
+    if (options && options.all) return callback(null, ordered);
+    callback(null, ordered[0].address, 4);
+  });
+}
+
+const sheetsAgent = new https.Agent({ keepAlive: true, lookup: lookupAvoidingBad });
+
 async function fetchEcho(location, attempts = 6) {
   let last = '';
   let redirects = 0;
   for (let i = 1; i <= attempts; i++) {
-    const r = await axios.get(location, { maxRedirects: 0, validateStatus: () => true });
+    const r = await axios.get(location, { maxRedirects: 0, validateStatus: () => true, httpsAgent: sheetsAgent, timeout: 30000 });
     if (r.status === 200 && r.data && typeof r.data === 'object') return r.data;
     last = `status ${r.status}`;
     // 404 обычно проходит через секунду; редирект обратно на /exec — ключ уже мёртв
@@ -116,7 +159,7 @@ async function sheetsPost(payload, attempts = 3) {
 
   for (let i = 1; i <= attempts; i++) {
     try {
-      const r = await axios.post(WEBHOOK_URL, payload, { maxRedirects: 0, validateStatus: () => true });
+      const r = await axios.post(WEBHOOK_URL, payload, { maxRedirects: 0, validateStatus: () => true, httpsAgent: sheetsAgent, timeout: 30000 });
 
       if (r.status === 200 && r.data && typeof r.data === 'object') return r.data;
 
@@ -127,6 +170,7 @@ async function sheetsPost(payload, attempts = 3) {
       lastError = new Error(`unexpected reply: status ${r.status}`);
     } catch (error) {
       lastError = error;
+      markBadIp(error);                     // следующая попытка пойдёт на другой адрес
     }
     console.warn(`Sheets attempt ${i}/${attempts} failed (${payload.action || 'add'}): ${lastError.message}`);
     if (i < attempts) await sleep(1500);
@@ -2135,7 +2179,8 @@ module.exports = {
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
   checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo,
   buildMorningDigest, redNewsToday, isWeekendInMinsk, FIRMS,
-  fpCalendarLine, fpEventsToday, announceFpCalendar
+  fpCalendarLine, fpEventsToday, announceFpCalendar,
+  lookupAvoidingBad, markBadIp
 };
 
 // На своём сервере работаем длинным опросом (BOT_MODE=polling): Telegram не ходит
