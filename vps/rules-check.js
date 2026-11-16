@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { post } = require('./sheets.js');
+const { isMine, describeAccounts } = require('./accounts.js');
 
 const DIR = path.join(__dirname, 'rules');
 
@@ -159,10 +160,16 @@ function summarize(firm, changes, context) {
 
   const prompt =
 `Ты следишь за правилами проп-фирмы ${firm} для трейдера, который у неё торгует.
+Его счета у этой фирмы: ${describeAccounts(firm)}.
 Ниже — официальные страницы с правилами, которые изменились со вчерашнего дня
 (в виде diff: «-» было, «+» стало).
 
-Напиши по-русски, на «ты», обычным текстом без markdown, не длиннее 700 знаков:
+САМАЯ ПЕРВАЯ строка ответа — ровно «КАСАЕТСЯ: да» или «КАСАЕТСЯ: нет». «да» — если правка
+меняет правила именно его счетов (его модели и этапа) или общие правила, которые действуют на
+все счета. «нет» — если правка только про другие модели, акции, цены, оформление.
+Пользователь просил не присылать ему то, что не касается его счетов.
+
+Со второй строки, только если «да», напиши по-русски, на «ты», обычным текстом без markdown, не длиннее 700 знаков:
 - Если поменялись правила, которые влияют на торговлю или выплаты (новости и окна вокруг них,
   дневная и общая просадка, удержание позиций на выходные и ночь, запрещённые стратегии,
   консистентность, лот, сроки и условия выплат), — что именно стало иначе, одной-двумя фразами
@@ -204,14 +211,20 @@ async function checkFirm(src) {
   }
 
   const before = JSON.parse(fs.readFileSync(file, 'utf8'));
-  const changes = compare(before, now);
+  const all = compare(before, now);
+  // Только статьи про его счета (vps/accounts.js). Правки про чужие модели снимок
+  // впитывает молча — пользователь просил о них не писать (16.11.2026).
+  const changes = all.filter(c => isMine(src.firm, c));
+  if (all.length !== changes.length) {
+    console.log(`${src.firm}: правок не про его счета — ${all.length - changes.length}:`, all.filter(c => !isMine(src.firm, c)).map(c => `«${c.title}»`).join('; '));
+  }
   if (!changes.length) {
     await save(src.firm, 'none', 'без изменений');
     fs.writeFileSync(file, JSON.stringify(now));
     return;
   }
 
-  console.log(`${src.firm}: изменений ${changes.length}:`, changes.map(c => `${c.kind} «${c.title}»`).join('; '));
+  console.log(`${src.firm}: изменений по его счетам ${changes.length}:`, changes.map(c => `${c.kind} «${c.title}»`).join('; '));
 
   // Список страниц со ссылками — всегда, что бы ни сказал разбор. Решение «важно или
   // нет» остаётся за пользователем: он может открыть страницу и посмотреть сам.
@@ -225,7 +238,17 @@ async function checkFirm(src) {
     await save(src.firm, 'changed', `изменились страницы, но пересказать не вышло — открой и посмотри сам:\n${list}`);
     return;
   }
-  await save(src.firm, 'changed', `${summary}\n${list}`);
+  // Общие страницы (Terms, страница правил) описывают все модели сразу — касается ли
+  // правка его счетов, решает разбор первой строкой.
+  const head = (summary.split('\n')[0] || '').trim();
+  const body = summary.split('\n').slice(1).join('\n').trim();
+  if (/КАСАЕТСЯ:\s*нет/i.test(head)) {
+    console.log(`${src.firm}: разбор считает, что правки не про его счета`);
+    await save(src.firm, 'none', 'без изменений');
+    fs.writeFileSync(file, JSON.stringify(now));
+    return;
+  }
+  await save(src.firm, 'changed', `${/КАСАЕТСЯ:/i.test(head) ? body : summary}\n${list}`);
   fs.writeFileSync(file, JSON.stringify(now));
 
   // Правила поменялись — карточки «📋 Правила» этой фирмы пересобираем по новым текстам.
