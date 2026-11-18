@@ -546,6 +546,14 @@ function fpImpactKnown(row) {
   return (row.icons || []).some(i => /~(Low|Medium|High) Impact~/i.test(i));
 }
 
+// Какие из его активов задевает новость по этой валюте: GBP → UK100, USD → USDCHF и
+// XAUUSD. Фирмы ограничивают только инструменты, которых касается новость
+// (FundingPips, 13.11.2026), поэтому рядом с новостью — именно эти активы.
+function assetsHit(currency) {
+  const hit = ASSETS.filter(a => (ASSET_CURRENCIES[a] || []).includes(currency));
+  return hit.length ? ` ⛔ ${hit.join(', ')}` : '';
+}
+
 function fpEventsToday(fp, currencies) {
   const rows = (fp.data && fp.data.rows) || [];
   const parsed = rows
@@ -576,7 +584,7 @@ function fpCalendarLine(fp, today, currencies, label) {
   if (!fp || fp.date !== today) {
     return { final: false, text: `⏳ ${label}: календарь FundingPips ещё не прочитан — Мак сегодня ещё не включался. Дочитаю, как проснётся — до открытия Лондона.` };
   }
-  const list = evs => [...evs].sort((a, b) => a.time.localeCompare(b.time)).map(e => `   ${e.time}  ${e.currency}  ${e.title}`);
+  const list = evs => [...evs].sort((a, b) => a.time.localeCompare(b.time)).map(e => `   ${e.time}  ${e.currency}${assetsHit(e.currency)} — ${e.title}`);
   if (fp.status === 'ok') {
     const { lockSeen, restricted, mine } = fpEventsToday(fp, currencies);
     if (!lockSeen && mine.length) {
@@ -697,7 +705,7 @@ async function buildMorningDigest(now, canaryWarning) {
       const everyone = allNames.every(n => e.firms.some(f => f.replace(/[≈*]$/, '') === n));
       const who = allNames.length === 1 ? e.firms.join(', ') : (everyone ? 'у всех' : `только ${e.firms.join(', ')}`);
       const title = e.titles.slice(0, 2).join(' / ');
-      lines.push(`   ${e.time}  ${e.currency}  ${title} — ${who}${e.passed ? ' (уже прошла)' : ''}`);
+      lines.push(`   ${e.time}  ${e.currency}${assetsHit(e.currency)} — ${title} — ${who}${e.passed ? ' (уже прошла)' : ''}`);
     }
   }
   for (const n of ruleLines) lines.push(n);
@@ -718,7 +726,7 @@ async function buildMorningDigest(now, canaryWarning) {
     }
     if (!red.size) lines.push('✅ нет');
     for (const e of [...red.values()].sort((a, b) => a.time.localeCompare(b.time))) {
-      lines.push(`   ${e.time}  ${e.currency}  ${e.titles.slice(0, 2).join(' / ')}${e.passed ? ' (уже прошла)' : ''}`);
+      lines.push(`   ${e.time}  ${e.currency}${assetsHit(e.currency)} — ${e.titles.slice(0, 2).join(' / ')}${e.passed ? ' (уже прошла)' : ''}`);
     }
   }
 
@@ -2221,7 +2229,7 @@ module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
   checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo,
-  buildMorningDigest, redNewsToday, isWeekendInMinsk, FIRMS,
+  buildMorningDigest, redNewsToday, assetsHit, isWeekendInMinsk, FIRMS,
   fpCalendarLine, fpEventsToday, announceFpCalendar,
   lookupAvoidingBad, markBadIp
 };
