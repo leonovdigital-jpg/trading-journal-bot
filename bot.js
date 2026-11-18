@@ -1265,10 +1265,30 @@ function gradeKeyboard() {
     inline_keyboard: [[
       { text: 'A', callback_data: 'grade_A' },
       { text: 'A (-)', callback_data: 'grade_A (-)' },
-      { text: 'B', callback_data: 'grade_B' },
-      { text: 'C', callback_data: 'grade_C' }
+      { text: 'B ❌', callback_data: 'grade_B' },
+      { text: 'C ❌', callback_data: 'grade_C' }
     ]]
   };
+}
+
+// Класс входа: в таблицу идёт ровно текст кнопки, «Своё» — что напишет сам.
+const ENTRY_CLASSES = ['5m+test', '5m_2 conf', '1m_Risk_pror'];
+const ENTRY_CLASS_QUESTION = 'Класс входа:';
+
+function entryClassKeyboard() {
+  return {
+    inline_keyboard: [
+      ENTRY_CLASSES.map((c, i) => ({ text: c, callback_data: 'eclass_' + i })),
+      [{ text: '✏️ Своё', callback_data: 'eclass_own' }]
+    ]
+  };
+}
+
+async function setEntryClass(ctx, state, value) {
+  state.entryClass = value;
+  state.step = 'waiting_asset';
+  userStates.set(ctx.chat.id, state);
+  await ctx.reply('Какой актив?', { reply_markup: assetKeyboard() });
 }
 
 async function saveNewTrade(ctx, state) {
@@ -1304,6 +1324,7 @@ async function saveNewTrade(ctx, state) {
     pair: state.asset,
     against: state.against,
     grade: state.grade,
+    entryClass: state.entryClass || '',
     accounts: state.accSelected.map(name => ({ name: name, risk: state.accRisks[name] })),
     plan: position
   };
@@ -1333,7 +1354,7 @@ async function saveNewTrade(ctx, state) {
   const sessionLine = session ? `\nСессия: ${session}` : '\n⚠️ Время вне твоих сессий — укажи вручную';
 
   await ctx.reply(
-    `✅ ${state.asset} · класс ${state.grade} · ${riskSummary(state)}${sessionLine}${shots}\n\n` +
+    `✅ ${state.asset} · класс ${state.grade}${state.entryClass ? ' · вход ' + state.entryClass : ''} · ${riskSummary(state)}${sessionLine}${shots}\n\n` +
     'Записал.\n<b>Ты дал цену слова, у тебя есть 5 минут…</b>\n\n/closetrade для закрытия',
     {
       parse_mode: 'HTML',
@@ -1815,6 +1836,12 @@ bot.on('text', async (ctx) => {
       userStates.set(chatId, state);
       await ctx.reply('Класс позиции:', { reply_markup: gradeKeyboard() });
 
+    } else if (state.step === 'waiting_entry_class' || state.step === 'waiting_entry_class_own') {
+      // Текст вместо кнопки — это и есть «своё».
+      const own = text.trim();
+      if (!own) { await ctx.reply('Напиши класс входа текстом.'); return; }
+      await setEntryClass(ctx, state, own);
+
     } else if (state.step === 'closing_errors') {
       state.closeErrors = text.trim();
       await finishClose(ctx, state);
@@ -1998,11 +2025,27 @@ bot.on('callback_query', async (ctx) => {
         return;
       }
       state.grade = data.replace('grade_', '');
-      state.step = 'waiting_asset';
+      state.step = 'waiting_entry_class';
       userStates.set(chatId, state);
       await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
 
-      await ctx.reply('Какой актив?', { reply_markup: assetKeyboard() });
+      await ctx.reply(ENTRY_CLASS_QUESTION, { reply_markup: entryClassKeyboard() });
+
+    } else if (data.startsWith('eclass_')) {
+      if (state.step !== 'waiting_entry_class') {
+        await ack('Этот шаг уже пройден');
+        return;
+      }
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      if (data === 'eclass_own') {
+        state.step = 'waiting_entry_class_own';
+        userStates.set(chatId, state);
+        await ctx.reply('Напиши класс входа:');
+      } else {
+        const value = ENTRY_CLASSES[parseInt(data.slice('eclass_'.length), 10)];
+        if (!value) { await ack('Кнопка устарела'); return; }
+        await setEntryClass(ctx, state, value);
+      }
 
     } else if (data === 'errors_skip') {
       if (state.step !== 'closing_errors') {

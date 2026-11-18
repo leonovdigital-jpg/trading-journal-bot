@@ -32,6 +32,10 @@ var COL_ACCOUNT_OLD = 22;  // V — аккаунт (историческое)
 var PLAN_FIELDS = ['Сторона', 'Вход', 'Стоп', 'Цель', 'RR плана'];
 function planCol(k) { return lastDataCol() + 1 + k; }
 
+// Класс входа (5m+test, 5m_2 conf, 1m_Risk_pror или свой текст) — сразу за планом.
+var ENTRY_CLASS_TITLE = 'Класс входа';
+function entryClassCol() { return planCol(PLAN_FIELDS.length); }
+
 var PROPS_SHEET = 'Props';
 var STATS_SHEET = 'Статистика';
 var PROPS_MAX_ROW = 50;
@@ -559,6 +563,7 @@ function weeklyTrades(ss, sheet, data) {
       against: String(row[COL_AGAINST - 1] || ''),
       notes: String(row[COL_ERRORS - 1] || ''),
       grade: String(row[COL_GRADE - 1] || ''),
+      entryClass: String(row[entryClassCol() - 1] || ''),
       shots: {
         m5: String(row[COL_SHOT_5M - 1] || ''),
         h1: String(row[COL_SHOT_1H - 1] || ''),
@@ -1266,6 +1271,11 @@ function addNewTrade(sheet, data) {
   }
 
   writePlan(sheet, lastRow, data.plan);
+  if (data.entryClass) {
+    ensureColumns(sheet, entryClassCol());
+    sheet.getRange(1, entryClassCol()).setValue(ENTRY_CLASS_TITLE).setFontWeight('bold');
+    sheet.getRange(lastRow, entryClassCol()).setValue(String(data.entryClass));
+  }
   applyRowFormulas(sheet, lastRow);
 
   return createResponse(true, 'Trade added', { row: lastRow, accounts: written });
