@@ -32,7 +32,7 @@ var COL_ACCOUNT_OLD = 22;  // V — аккаунт (историческое)
 var PLAN_FIELDS = ['Сторона', 'Вход', 'Стоп', 'Цель', 'RR плана'];
 function planCol(k) { return lastDataCol() + 1 + k; }
 
-// Класс входа (5m+test, 5m_2 conf, 1m_Risk_pror или свой текст) — сразу за планом.
+// Класс входа (5m+test, 5m_2 conf, 1m_Risk_prop или свой текст) — сразу за планом.
 var ENTRY_CLASS_TITLE = 'Класс входа';
 function entryClassCol() { return planCol(PLAN_FIELDS.length); }
 

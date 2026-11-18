@@ -1272,7 +1272,7 @@ function gradeKeyboard() {
 }
 
 // Класс входа: в таблицу идёт ровно текст кнопки, «Своё» — что напишет сам.
-const ENTRY_CLASSES = ['5m+test', '5m_2 conf', '1m_Risk_pror'];
+const ENTRY_CLASSES = ['5m+test', '5m_2 conf', '1m_Risk_prop'];
 const ENTRY_CLASS_QUESTION = 'Класс входа:';
 
 function entryClassKeyboard() {
