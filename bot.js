@@ -185,7 +185,7 @@ function newRequestId() {
 
 // Список пропов живёт в Apps Script (PROPS) — бот берёт его оттуда,
 // чтобы не держать две копии. Fallback на случай недоступности Sheets.
-const DEFAULT_PROPS = ['Instant', '100k challenge', 'FundingPips'];
+const DEFAULT_PROPS = ['Instant', 'FundingPips'];
 let propsCache = null;
 // Размеры аккаунтов (лист Props) — база для пересчёта риска $ → %.
 // После пройденного челленджа размер меняется строкой в Props, поэтому держать их
@@ -456,7 +456,7 @@ const ASSET_CURRENCIES = {
 //   роли не играет. Страница fundingpips.com/economic-calendar закрыта защитой Vercel
 //   от автоматических браузеров — и с сервера, и отсюда. Обходить её не стали.
 //   Поэтому Forex Factory — подсказка, а сверять надо по их ссылке.
-// Finotive (счета Instant и 100k challenge): на сайте фирмы окна вокруг новостей
+// Finotive (счёт Instant; 100k challenge закрыт 19.11.2026): на сайте фирмы окна вокруг новостей
 //   не нашлось; сторонние обзоры пишут, что окна нет, но запрещён «news straddling».
 //   Ответа фирмы пока нет.
 const FIRMS = [
@@ -476,7 +476,7 @@ const FIRMS = [
   // и жёлтых новостей Forex Factory. Обычную сделку в одну сторону новость не делает
   // нарушением, а пользователю нужно только то, за что наказывают, — поэтому списка
   // новостей для Finotive нет, только одна строка с правилом.
-  { name: 'Finotive', accounts: ['Instant', '100k challenge'], noNewsWindow: true,
+  { name: 'Finotive', accounts: ['Instant'], noNewsWindow: true,
     rule: 'новости не ограничены. Нельзя только встречные или хедж-позиции ±15 мин от красных и жёлтых новостей Forex Factory' }
 ];
 
@@ -1476,11 +1476,13 @@ bot.start((ctx) => {
 // «📋 Правила»: по каждому счёту — только то, за что фирма закроет счёт или срежет
 // выплату. Карточки собирает сервер из официальных текстов фирм (vps/rules-cards.js)
 // и пересобирает сам, когда фирма меняет правила.
-const RULES_ORDER = ['FundingPips', 'Instant', '100k challenge'];
+// Это же и список действующих счетов: карточки закрытых (100k challenge, 19.11.2026)
+// в таблице могут остаться, но в меню не попадают.
+const RULES_ORDER = ['FundingPips', 'Instant'];
 
 async function loadRulesCards() {
   const r = await sheetsPost({ action: 'getRulesCards' });
-  const cards = (r && Array.isArray(r.data)) ? r.data : [];
+  const cards = ((r && Array.isArray(r.data)) ? r.data : []).filter(c => RULES_ORDER.includes(c.account));
   return cards.sort((a, b) => {
     const ia = RULES_ORDER.indexOf(a.account), ib = RULES_ORDER.indexOf(b.account);
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
@@ -1607,7 +1609,7 @@ bot.command('stats', async (ctx) => {
 });
 
 // /balance                → текущие балансы
-// /balance 100k 98369     → зафиксировать фактический баланс пропа на текущий момент.
+// /balance Instant 50562     → зафиксировать фактический баланс пропа на текущий момент.
 // Проценты по сделкам считаются от РАЗМЕРА аккаунта (лист Props) и не меняются;
 // фиксация влияет только на «текущий баланс» = фиксация + сделки после неё.
 // Запись баланса — общая для обоих путей: кнопочного /balance и старой строки
@@ -2229,7 +2231,7 @@ module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
   checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo,
-  buildMorningDigest, redNewsToday, assetsHit, isWeekendInMinsk, FIRMS,
+  buildMorningDigest, redNewsToday, assetsHit, loadRulesCards, isWeekendInMinsk, FIRMS,
   fpCalendarLine, fpEventsToday, announceFpCalendar,
   lookupAvoidingBad, markBadIp
 };

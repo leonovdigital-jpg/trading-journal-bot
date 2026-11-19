@@ -6,8 +6,8 @@
 //           пользователь просил не писать (16.11.2026: «зачем мне инфа не по моему
 //           аккаунту?» — пришла правка про EXP 001, 1-Step, а у него 2 Step Flex).
 
-// Счета пользователя. Типы подтвердил пользователь 13.11.2026: Instant — Lite,
-// 100k challenge — Two Step. Явно просим не включать чужие варианты: иначе памятка
+// Счета пользователя. Типы подтвердил пользователь 13.11.2026: Instant — Lite.
+// 100k challenge (Finotive Two Step) закрыт 19.11.2026 — из списка убран. Явно просим не включать чужие варианты: иначе памятка
 // раздувается правилами, которые к счёту не относятся.
 const ACCOUNTS = [
   {
@@ -26,14 +26,6 @@ const ACCOUNTS = [
     pick: a => /instant|prohibited|news|straddl|hedg|copier|expert advisor|scalping|high-frequency|liquidity|consistency|drawdown|breach|strike|reward payment|payout|profit concentration|over-sizing|inactiv|weekend|terms|rules/i.test(a.title + ' ' + a.url),
     note: 'Поддержка Finotive 13.11.2026: правила из Terms действуют на этот счёт, включая 7.15 Profit Concentration и 7.9 News Straddling; новые правила в Terms помечаются как новые. FAQ и Terms описывают одно и то же. Оговорку про дату покупки не пиши.',
     notMine: a => /standard|\bpro\b|one[- ]?step|1-step|two[- ]?step|2-step|solo|challenge/i.test(a.title) && !/lite/i.test(a.title)
-  },
-  {
-    account: '100k challenge', firm: 'Finotive', size: '100 000 $',
-    plan: 'Two Step Challenge (именно Two Step — правила One Step и Solo не включай)', stage: 'evaluation (Phase 1 или 2; после прохождения — funded, его правила дай отдельным блоком)',
-    bought: 'до 15.09.2026',
-    pick: a => /challenge|one step|two step|solo|prohibited|news|straddl|hedg|copier|expert advisor|scalping|high-frequency|liquidity|consistency|drawdown|breach|strike|inactiv|weekend|terms|rules/i.test(a.title + ' ' + a.url),
-    note: 'Поддержка Finotive 13.11.2026: правила из Terms действуют на этот счёт, включая 7.9 News Straddling; новые правила в Terms помечаются как новые. Оговорку про дату покупки не пиши. 7.15 Profit Concentration по тексту Terms действует только для Instant Funding Standard и Lite — в эту памятку его не включай.',
-    notMine: a => /one[- ]?step|1-step|solo|instant/i.test(a.title) && !/two[- ]?step|2-step/i.test(a.title)
   }
 ];
 

@@ -8,7 +8,7 @@
 //
 //   node rules-cards.js                 — пересобрать все карточки
 //   node rules-cards.js FundingPips     — только счета этой фирмы (так зовёт rules-check)
-//   node rules-cards.js "100k challenge" — только один счёт
+//   node rules-cards.js "Instant" — только один счёт
 
 const fs = require('fs');
 const path = require('path');

@@ -7,6 +7,14 @@ var PROP_DEFAULT_BALANCE = {
   'FundingPips': 100000
 };
 
+// Закрытые счета: их колонки и история в журнале остаются (на позиции колонок
+// завязаны формулы и разметка остальных счетов), но бот их больше не предлагает
+// и не показывает. 100k challenge убран по просьбе пользователя 19.11.2026.
+var RETIRED_PROPS = ['100k challenge'];
+function activeProps() {
+  return PROPS.filter(function (name) { return RETIRED_PROPS.indexOf(name) === -1; });
+}
+
 var PROP_START_COL = 23;   // W
 var COLS_PER_PROP = 4;     // Risk %, $, %, RR
 
@@ -217,9 +225,9 @@ function doPost(e) {
     if (data.action === 'ping') {
       // sizes — размер аккаунта из Props на сейчас: бот пересчитывает риск $ → %
       var sizes = {};
-      PROPS.forEach(function (name) { sizes[name] = balanceFor(ss, name, new Date()); });
+      activeProps().forEach(function (name) { sizes[name] = balanceFor(ss, name, new Date()); });
       return createResponse(true, 'pong', {
-        props: PROPS,
+        props: activeProps(),
         sizes: sizes,
         timezone: ss.getSpreadsheetTimeZone(),
         locale: ss.getSpreadsheetLocale(),
@@ -1040,6 +1048,7 @@ function getStats(ss, sheet) {
   var props = [];
 
   for (var p = 0; p < PROPS.length; p++) {
+    if (RETIRED_PROPS.indexOf(PROPS[p]) !== -1) continue;
     var c = propCols(p);
     var size = balanceInfoFor(ss, PROPS[p], now);
     var snap = balanceSnapshotFor(ss, PROPS[p], now);
@@ -1208,7 +1217,7 @@ function getOpenTrades(sheet) {
   return ContentService.createTextOutput(JSON.stringify({
     success: true,
     sheet: sheet.getName(),
-    props: PROPS,
+    props: activeProps(),
     today: Utilities.formatDate(new Date(), tz, 'dd.MM.yyyy'),
     trades: openTrades
   })).setMimeType(ContentService.MimeType.JSON);
