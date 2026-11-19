@@ -1174,7 +1174,7 @@ function sessionKeyboard() {
 // Кнопка висит под полем ввода постоянно, нажатие в любой момент стирает прошлый
 // незаконченный опрос и начинает заново.
 const ENTRY_BUTTON = 'ВХОД';
-const AGAINST_QUESTION = '🧨🧨 Аргументы против?';
+const AGAINST_QUESTION = '🧨🧨 Аргументы против? ( 5 МИНУТ ТАЙМЕР)';
 const ASSETS = (process.env.ASSETS || 'UK100,USDCHF,XAUUSD').split(',').map(x => x.trim()).filter(Boolean);
 // Скрин входа бот снимает сам: 5 минут (в пределах сегодняшнего дня), 1h, 4h, 1d.
 // У DXY пятиминутка не нужна — в журнале под него только три колонки.
@@ -1271,10 +1271,11 @@ async function startEntry(ctx) {
 function gradeKeyboard() {
   return {
     inline_keyboard: [[
+      // С 19.11.2026 классов три. Кнопка «(A-)» пишет «A (-)», как раньше, —
+      // чтобы новые сделки считались вместе со старыми. B и C остались в истории.
       { text: 'A', callback_data: 'grade_A' },
-      { text: 'A (-)', callback_data: 'grade_A (-)' },
-      { text: 'B ❌', callback_data: 'grade_B' },
-      { text: 'C ❌', callback_data: 'grade_C' }
+      { text: '(A-)', callback_data: 'grade_A (-)' },
+      { text: 'Слив ❌', callback_data: 'grade_Слив' }
     ]]
   };
 }
