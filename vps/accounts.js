@@ -26,6 +26,17 @@ const ACCOUNTS = [
     pick: a => /instant|prohibited|news|straddl|hedg|copier|expert advisor|scalping|high-frequency|liquidity|consistency|drawdown|breach|strike|reward payment|payout|profit concentration|over-sizing|inactiv|weekend|terms|rules/i.test(a.title + ' ' + a.url),
     note: 'Поддержка Finotive 13.11.2026: правила из Terms действуют на этот счёт, включая 7.15 Profit Concentration и 7.9 News Straddling; новые правила в Terms помечаются как новые. FAQ и Terms описывают одно и то же. Оговорку про дату покупки не пиши.',
     notMine: a => /standard|\bpro\b|one[- ]?step|1-step|two[- ]?step|2-step|solo|challenge/i.test(a.title) && !/lite/i.test(a.title)
+  },
+  {
+    // Куплен 20.11.2026. Источник — две страницы (FAQ и Terms) на все программы сразу,
+    // поэтому pick берёт обе, а касается ли правка его счёта, решает разбор первой строкой.
+    account: 'CFT', firm: 'Crypto Fund Trader', size: '100 000 $',
+    plan: '2-Phase Evaluation (именно 2-Phase — правила 1-Step, former 1-Phase, 3-Phase, Break, Ascend, Instant и Bybit-счетов не включай)',
+    stage: 'Phase 1 (потом Phase 2 и Final Stage — правила Final Stage дай отдельным блоком)',
+    bought: '20.11.2026',
+    pick: () => true,
+    note: 'Платформа MT5 или Match-Trader (не Bybit). Трейдер торгует те же сделки в ту же сторону на счетах других фирм.',
+    notMine: () => false
   }
 ];
 

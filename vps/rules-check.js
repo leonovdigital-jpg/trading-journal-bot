@@ -44,7 +44,12 @@ const FIRMS = [
   ],
     // Поддержка Finotive 13.11.2026 (второй ответ): правила из Terms действуют на счета
     // пользователя, новые правила в Terms помечаются как новые.
-    context: 'Важно: у этой фирмы правила из Terms действуют на уже открытый счёт трейдера (Instant Lite), а новые правила в Terms помечаются как новые. Если правка помечена как новая — скажи об этом и что она может коснуться его счетов.' }
+    context: 'Важно: у этой фирмы правила из Terms действуют на уже открытый счёт трейдера (Instant Lite), а новые правила в Terms помечаются как новые. Если правка помечена как новая — скажи об этом и что она может коснуться его счетов.' },
+  // Crypto Fund Trader: всё в двух статичных страницах — FAQ и Terms (проверено
+  // 20.11.2026: два скачивания подряд дают один и тот же текст).
+  { firm: 'Crypto Fund Trader', type: 'pages',
+    urls: ['https://cryptofundtrader.com/faq', 'https://cryptofundtrader.com/terms-and-conditions'],
+    context: 'Важно: обе страницы описывают все программы фирмы сразу. Его счёт — 2-Phase; правки про 1-Step, Break, Ascend, Instant, 3-Phase и Bybit его не касаются. Terms п.1.3: фирма может менять правила в любой момент, и они действуют сразу.' }
 ];
 
 function plain(html) {
@@ -264,7 +269,9 @@ async function main() {
   fs.mkdirSync(DIR, { recursive: true });
   let failed = 0;
   // Фирмы проверяются по отдельности: сбой одной не должен оставить без итога другую.
-  for (const src of FIRMS) {
+  // node rules-check.js "Crypto Fund Trader" — только одна фирма (первый прогон новой).
+  const only = process.argv[2];
+  for (const src of FIRMS.filter(f => !only || f.firm === only)) {
     try {
       await checkFirm(src);
       console.log(`${src.firm}: готово`);

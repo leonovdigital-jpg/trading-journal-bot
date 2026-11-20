@@ -1,10 +1,13 @@
 /*** Trade Journal — Apps Script ***/
 
-var PROPS = ['Instant', '100k challenge', 'FundingPips'];
+// Новый счёт — только в КОНЕЦ списка и вместе с action addPropColumns: на позиции
+// колонок завязаны формулы, план и класс входа.
+var PROPS = ['Instant', '100k challenge', 'FundingPips', 'CFT'];
 var PROP_DEFAULT_BALANCE = {
   'Instant': 50000,
   '100k challenge': 100000,
-  'FundingPips': 100000
+  'FundingPips': 100000,
+  'CFT': 100000
 };
 
 // Закрытые счета: их колонки и история в журнале остаются (на позиции колонок
@@ -221,6 +224,20 @@ function doPost(e) {
     if (data.action === 'getRulesCards') return getRulesCards(ss);
     if (data.action === 'getFpCalendar') return getFpCalendar();
     if (data.action === 'markReportSent') return markReportSent(ss, data);
+    if (data.action === 'addPropColumns') {
+      // test: прогон на копии листа «Traders тест» — без Props и «Статистики»
+      if (data.test) {
+        var old = ss.getSheetByName('Traders тест');
+        if (old) ss.deleteSheet(old);
+        return addPropColumns(ss, sheet.copyTo(ss).setName('Traders тест'), true);
+      }
+      return addPropColumns(ss, sheet);
+    }
+    if (data.action === 'dropTestSheet') {
+      var t = ss.getSheetByName('Traders тест');
+      if (t) ss.deleteSheet(t);
+      return createResponse(true, t ? 'dropped' : 'none');
+    }
     if (data.action === 'headers')       { buildHeaders(sheet); return createResponse(true, 'headers rebuilt'); }
     if (data.action === 'ping') {
       // sizes — размер аккаунта из Props на сейчас: бот пересчитывает риск $ → %
@@ -1514,6 +1531,40 @@ function ensureColumns(sheet, needed) {
   if (max < needed) sheet.insertColumnsAfter(max, needed - max);
 }
 
+// Переносит журнал на раскладку с новым (последним в PROPS) счётом: вставляет его
+// блок из 4 колонок перед «Итого $» и колонку закрытия после остальных закрытий.
+// Всё правее (Итого, закрытия, план, класс входа) Sheets сдвигает сам вместе с
+// формулами. Перед этим копирует лист целиком. Повторный вызов ничего не делает.
+function addPropColumns(ss, sheet, test) {
+  var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var totalAt = header.indexOf('Итого $') + 1;
+  if (totalAt === totalUsdCol()) return createResponse(true, 'already', { total: a1col(totalAt) });
+  var oldN = PROPS.length - 1;
+  if (totalAt !== PROP_START_COL + oldN * COLS_PER_PROP) {
+    return createResponse(false, 'Итого $ в неожиданной колонке ' + totalAt + ' — ничего не трогаю');
+  }
+  var stamp = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'dd.MM HH:mm');
+  if (!test) sheet.copyTo(ss).setName('Traders копия ' + stamp);
+
+  sheet.insertColumnsAfter(totalAt - 1, COLS_PER_PROP);
+  // закрытия старых счетов теперь начинаются за новым «Итого $»
+  var lastOldClose = totalAt + COLS_PER_PROP + oldN;
+  sheet.insertColumnsAfter(lastOldClose, 1);
+
+  sheet.showColumns(totalUsdCol() + 1, PROPS.length);
+  buildHeaders(sheet);
+  var rows = applyAllFormulas(sheet);
+  formatSheet(sheet);
+  if (!test) {
+    ensurePropsSheet(ss);
+    buildStats(ss, sheet);
+  }
+  return createResponse(true, test ? 'test ok' : 'added', {
+    prop: PROPS[PROPS.length - 1], rows: rows, total: a1col(totalUsdCol()),
+    plan: a1col(planCol(0)), entryClass: a1col(entryClassCol()), backup: 'Traders копия ' + stamp
+  });
+}
+
 function buildHeaders(sheet) {
   ensureColumns(sheet, lastDataCol());
 
@@ -1566,6 +1617,10 @@ function buildHeaders(sheet) {
   if (tail > 0) {
     sheet.getRange(1, last + 1, 1, tail).clearContent().setBackground(null);
   }
+  // план и класс входа живут правее служебных колонок — их подписи возвращаем
+  ensureColumns(sheet, entryClassCol());
+  sheet.getRange(1, planCol(0), 1, PLAN_FIELDS.length).setValues([PLAN_FIELDS]).setFontWeight('bold');
+  sheet.getRange(1, entryClassCol()).setValue(ENTRY_CLASS_TITLE).setFontWeight('bold');
 }
 
 function migrateLegacy(ss, sheet) {

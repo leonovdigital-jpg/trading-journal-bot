@@ -185,7 +185,7 @@ function newRequestId() {
 
 // Список пропов живёт в Apps Script (PROPS) — бот берёт его оттуда,
 // чтобы не держать две копии. Fallback на случай недоступности Sheets.
-const DEFAULT_PROPS = ['Instant', 'FundingPips'];
+const DEFAULT_PROPS = ['Instant', 'FundingPips', 'CFT'];
 let propsCache = null;
 // Размеры аккаунтов (лист Props) — база для пересчёта риска $ → %.
 // После пройденного челленджа размер меняется строкой в Props, поэтому держать их
@@ -476,6 +476,11 @@ const FIRMS = [
   // и жёлтых новостей Forex Factory. Обычную сделку в одну сторону новость не делает
   // нарушением, а пользователю нужно только то, за что наказывают, — поэтому списка
   // новостей для Finotive нет, только одна строка с правилом.
+  // Crypto Fund Trader (счёт CFT, 2-Phase 100k, куплен 20.11.2026): FAQ — «News trading
+  // is allowed»; окно ±2 мин только у программы Ascend. Ловушки — не новости, а хедж
+  // и чужие идеи (Terms 7.1 vii, xiv), поэтому в строке именно они.
+  { name: 'Crypto Fund Trader', accounts: ['CFT'], noNewsWindow: true,
+    rule: 'новости разрешены (2-Phase). Нельзя: встречные позиции по одному инструменту, в том числе между счетами; сделки по чужим идеям и сигналам' },
   { name: 'Finotive', accounts: ['Instant'], noNewsWindow: true,
     rule: 'новости не ограничены. Нельзя только встречные или хедж-позиции ±15 мин от красных и жёлтых новостей Forex Factory' }
 ];
@@ -1479,7 +1484,7 @@ bot.start((ctx) => {
 // и пересобирает сам, когда фирма меняет правила.
 // Это же и список действующих счетов: карточки закрытых (100k challenge, 19.11.2026)
 // в таблице могут остаться, но в меню не попадают.
-const RULES_ORDER = ['FundingPips', 'Instant'];
+const RULES_ORDER = ['FundingPips', 'Instant', 'CFT'];
 
 async function loadRulesCards() {
   const r = await sheetsPost({ action: 'getRulesCards' });
