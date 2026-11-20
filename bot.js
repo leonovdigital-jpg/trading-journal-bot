@@ -1001,7 +1001,7 @@ async function uploadToGoogleSheets(trade, links) {
       day: trade.day,
       session: trade.session,
       pair: trade.pair,
-      thoughts: '',
+      thoughts: trade.thoughts || '',
       against: trade.against || '',
       accounts: trade.accounts,
       errors: '',
@@ -1015,7 +1015,9 @@ async function uploadToGoogleSheets(trade, links) {
       dxySmt1d: links[6] || '',
       // План сделки, прочитанный с инструмента позиции на графике. Без него
       // «сколько упустил, выйдя раньше» остаётся прикидкой по картинке.
-      plan: trade.plan || null
+      plan: trade.plan || null,
+      // Модель входа. До 20.11.2026 это поле здесь терялось: бот спрашивал, а в журнал не писал.
+      entryClass: trade.entryClass || ''
     };
 
     const reply = await sheetsPost(payload);
@@ -1184,7 +1186,10 @@ function sessionKeyboard() {
 // Кнопка висит под полем ввода постоянно, нажатие в любой момент стирает прошлый
 // незаконченный опрос и начинает заново.
 const ENTRY_BUTTON = 'ВХОД';
-const AGAINST_QUESTION = '🧨🧨 Аргументы против? ( 5 МИНУТ ТАЙМЕР)';
+// С 20.11.2026 вход начинается с факторов за, потом против (просьба пользователя).
+// «За» пишется в колонку E (раньше «Мысли до»), «против» — в F, как и было.
+const FOR_QUESTION = '✅ Факторы за? ( 5 МИНУТ ТАЙМЕР)';
+const AGAINST_QUESTION = '🧨🧨 Факторы против?';
 const ASSETS = (process.env.ASSETS || 'UK100,USDCHF,XAUUSD').split(',').map(x => x.trim()).filter(Boolean);
 // Скрин входа бот снимает сам: 5 минут (в пределах сегодняшнего дня), 1h, 4h, 1d.
 // У DXY пятиминутка не нужна — в журнале под него только три колонки.
@@ -1274,8 +1279,8 @@ function freeProps(trade, props) {
 }
 
 async function startEntry(ctx) {
-  userStates.set(ctx.chat.id, { step: 'waiting_against' });
-  await ctx.reply(AGAINST_QUESTION, { reply_markup: entryKeyboard() });
+  userStates.set(ctx.chat.id, { step: 'waiting_for' });
+  await ctx.reply(FOR_QUESTION, { reply_markup: entryKeyboard() });
 }
 
 // Класс позиции ставит бот, а не пользователь (20.11.2026). Правила — его собственные:
@@ -1375,6 +1380,7 @@ async function saveNewTrade(ctx, state) {
     day: new Date().toLocaleDateString('ru-RU', { weekday: 'long', timeZone: 'Europe/Minsk' }),
     session: session || '',
     pair: state.asset,
+    thoughts: state.thoughts || '',
     against: state.against,
     grade: state.grade,
     entryClass: state.entryClass || '',
@@ -1884,6 +1890,12 @@ bot.on('text', async (ctx) => {
           ] }
         }
       );
+
+    } else if (state.step === 'waiting_for') {
+      state.thoughts = text;
+      state.step = 'waiting_against';
+      userStates.set(chatId, state);
+      await ctx.reply(AGAINST_QUESTION);
 
     } else if (state.step === 'waiting_against') {
       state.against = text;

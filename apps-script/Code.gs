@@ -1574,6 +1574,7 @@ function buildHeaders(sheet) {
   sheet.getRange(1, PROP_START_COL, sheet.getMaxRows(), sheet.getMaxColumns() - PROP_START_COL + 1)
     .clearDataValidations();
 
+  sheet.getRange(1, 5).setValue('Факторы за');   // E — до 20.11.2026 «Мысли до»
   sheet.getRange(1, COL_AGAINST).setValue('Аргументы против');
   sheet.getRange(1, COL_TAKESTOP).setValue('Take/Stop (ист.)');
   sheet.getRange(1, COL_RISK_OLD).setValue('Risk (ист.)');
