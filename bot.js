@@ -1017,7 +1017,9 @@ async function uploadToGoogleSheets(trade, links) {
       // «сколько упустил, выйдя раньше» остаётся прикидкой по картинке.
       plan: trade.plan || null,
       // Модель входа. До 20.11.2026 это поле здесь терялось: бот спрашивал, а в журнал не писал.
-      entryClass: trade.entryClass || ''
+      entryClass: trade.entryClass || '',
+      // «до входа» / «после входа» — ответ на первый вопрос (с 20.11.2026)
+      filled: trade.filled || ''
     };
 
     const reply = await sheetsPost(payload);
@@ -1278,9 +1280,23 @@ function freeProps(trade, props) {
   return props.filter(name => !taken.includes(name));
 }
 
+// С 20.11.2026 первый вопрос — заполняет ли он бота ДО входа (просьба пользователя).
+// Нет времени подумать — не входить: скип или алерт на откат. Уже вошёл — запись
+// всё равно нужна, но помечается «после входа» (колонка «Заполнено» в журнале),
+// чтобы потом сравнить результат сделок, обдуманных заранее, и остальных.
+const PREFILL_QUESTION = 'Заполняешь бота ДО входа?  ( Если нету времени подумать - скип или алерт на откат который ВСЕГДА БУДЕТ)';
+
+function prefillKeyboard() {
+  return { inline_keyboard: [
+    [{ text: '✅ Да, до входа', callback_data: 'pre_before' }],
+    [{ text: '⏰ Нет времени — скип / алерт на откат', callback_data: 'pre_skip' }],
+    [{ text: '⚠️ Уже вошёл — записать', callback_data: 'pre_after' }]
+  ] };
+}
+
 async function startEntry(ctx) {
-  userStates.set(ctx.chat.id, { step: 'waiting_for' });
-  await ctx.reply(FOR_QUESTION, { reply_markup: entryKeyboard() });
+  userStates.set(ctx.chat.id, { step: 'waiting_prefill' });
+  await ctx.reply(PREFILL_QUESTION, { reply_markup: prefillKeyboard() });
 }
 
 // Класс позиции ставит бот, а не пользователь (20.11.2026). Правила — его собственные:
@@ -1384,6 +1400,7 @@ async function saveNewTrade(ctx, state) {
     against: state.against,
     grade: state.grade,
     entryClass: state.entryClass || '',
+    filled: state.filled || '',
     accounts: state.accSelected.map(name => ({ name: name, risk: state.accRisks[name] })),
     plan: position
   };
@@ -1891,6 +1908,9 @@ bot.on('text', async (ctx) => {
         }
       );
 
+    } else if (state.step === 'waiting_prefill') {
+      await ctx.reply('Сначала ответь кнопкой:\n\n' + PREFILL_QUESTION, { reply_markup: prefillKeyboard() });
+
     } else if (state.step === 'waiting_for') {
       state.thoughts = text;
       state.step = 'waiting_against';
@@ -2085,6 +2105,23 @@ bot.on('callback_query', async (ctx) => {
         state.riskIdx++;
         await askRiskForNext(ctx, state);
       }
+
+    } else if (data === 'pre_before' || data === 'pre_skip' || data === 'pre_after') {
+      if (state.step !== 'waiting_prefill') {
+        await ack('Этот шаг уже пройден');
+        return;
+      }
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      if (data === 'pre_skip') {
+        userStates.set(chatId, { step: 'idle' });
+        await ctx.reply('👍 Скип. Ставь алерт на откат — он будет всегда. Ничего не записал.',
+          { reply_markup: entryKeyboard() });
+        return;
+      }
+      state.filled = data === 'pre_before' ? 'до входа' : 'после входа';
+      state.step = 'waiting_for';
+      userStates.set(chatId, state);
+      await ctx.reply(FOR_QUESTION, { reply_markup: entryKeyboard() });
 
     } else if (data === 'ctx_with' || data === 'ctx_against') {
       if (state.step !== 'waiting_context') {

@@ -47,6 +47,10 @@ function planCol(k) { return lastDataCol() + 1 + k; }
 var ENTRY_CLASS_TITLE = 'Модель входа';
 function entryClassCol() { return planCol(PLAN_FIELDS.length); }
 
+// Заполнял бота до входа или уже после (с 20.11.2026): «до входа» / «после входа».
+var FILLED_TITLE = 'Заполнено';
+function filledCol() { return entryClassCol() + 1; }
+
 var PROPS_SHEET = 'Props';
 var STATS_SHEET = 'Статистика';
 var PROPS_MAX_ROW = 50;
@@ -589,6 +593,7 @@ function weeklyTrades(ss, sheet, data) {
       notes: String(row[COL_ERRORS - 1] || ''),
       grade: String(row[COL_GRADE - 1] || ''),
       entryClass: String(row[entryClassCol() - 1] || ''),
+      filled: String(row[filledCol() - 1] || ''),
       shots: {
         m5: String(row[COL_SHOT_5M - 1] || ''),
         h1: String(row[COL_SHOT_1H - 1] || ''),
@@ -1302,6 +1307,11 @@ function addNewTrade(sheet, data) {
     sheet.getRange(1, entryClassCol()).setValue(ENTRY_CLASS_TITLE).setFontWeight('bold');
     sheet.getRange(lastRow, entryClassCol()).setValue(String(data.entryClass));
   }
+  if (data.filled) {
+    ensureColumns(sheet, filledCol());
+    sheet.getRange(1, filledCol()).setValue(FILLED_TITLE).setFontWeight('bold');
+    sheet.getRange(lastRow, filledCol()).setValue(String(data.filled));
+  }
   applyRowFormulas(sheet, lastRow);
 
   return createResponse(true, 'Trade added', { row: lastRow, accounts: written });
@@ -1619,9 +1629,10 @@ function buildHeaders(sheet) {
     sheet.getRange(1, last + 1, 1, tail).clearContent().setBackground(null);
   }
   // план и класс входа живут правее служебных колонок — их подписи возвращаем
-  ensureColumns(sheet, entryClassCol());
+  ensureColumns(sheet, filledCol());
   sheet.getRange(1, planCol(0), 1, PLAN_FIELDS.length).setValues([PLAN_FIELDS]).setFontWeight('bold');
   sheet.getRange(1, entryClassCol()).setValue(ENTRY_CLASS_TITLE).setFontWeight('bold');
+  sheet.getRange(1, filledCol()).setValue(FILLED_TITLE).setFontWeight('bold');
 }
 
 function migrateLegacy(ss, sheet) {
