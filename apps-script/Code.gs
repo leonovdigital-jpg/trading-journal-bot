@@ -43,8 +43,8 @@ var COL_ACCOUNT_OLD = 22;  // V — аккаунт (историческое)
 var PLAN_FIELDS = ['Сторона', 'Вход', 'Стоп', 'Цель', 'RR плана'];
 function planCol(k) { return lastDataCol() + 1 + k; }
 
-// Класс входа (5m+test, 5m_2 conf, 1m_Risk_prop или свой текст) — сразу за планом.
-var ENTRY_CLASS_TITLE = 'Класс входа';
+// Модель входа (кнопки бота или свой текст) — сразу за планом. До 20.11.2026 — «Класс входа».
+var ENTRY_CLASS_TITLE = 'Модель входа';
 function entryClassCol() { return planCol(PLAN_FIELDS.length); }
 
 var PROPS_SHEET = 'Props';

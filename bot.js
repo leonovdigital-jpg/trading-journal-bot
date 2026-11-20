@@ -1127,8 +1127,13 @@ const RISK_PRESETS = [0.25, 0.5, 1];
 
 // Кнопки в долларах под размер конкретного аккаунта; в callback — процент,
 // потому что в таблицу идёт именно он. Без размера (нет строки в Props) — в %.
-function riskKeyboard(size) {
-  const presets = RISK_PRESETS.map(pct => ({
+// Свои суммы на конкретном счёте: на Instant пользователь часто входит на 300$ (20.11.2026).
+const EXTRA_RISK_USD = { Instant: [300] };
+
+function riskKeyboard(size, name) {
+  const extra = size ? (EXTRA_RISK_USD[name] || []).map(usd => Math.round(usd / size * 100 * 1000) / 1000) : [];
+  const pcts = [...new Set([...RISK_PRESETS, ...extra])].sort((a, b) => a - b);
+  const presets = pcts.map(pct => ({
     text: size ? `${Math.round(size * pct / 100)}$ (${pct}%)` : `${pct}%`,
     callback_data: `prisk_${pct}`
   }));
@@ -1161,7 +1166,7 @@ async function askRiskForNext(ctx, state) {
   const question = size
     ? `Риск на ${name} — сколько $? (аккаунт ${size.toLocaleString('ru-RU')}$)`
     : `Риск на ${name} (% от размера аккаунта)? Размер в Props не задан`;
-  await ctx.reply(question, { reply_markup: riskKeyboard(size) });
+  await ctx.reply(question, { reply_markup: riskKeyboard(size, name) });
 }
 
 function sessionKeyboard() {
@@ -1273,33 +1278,67 @@ async function startEntry(ctx) {
   await ctx.reply(AGAINST_QUESTION, { reply_markup: entryKeyboard() });
 }
 
-function gradeKeyboard() {
-  return {
-    inline_keyboard: [[
-      // С 19.11.2026 классов три. Кнопка «(A-)» пишет «A (-)», как раньше, —
-      // чтобы новые сделки считались вместе со старыми. B и C остались в истории.
-      { text: 'A', callback_data: 'grade_A' },
-      { text: '(A-)', callback_data: 'grade_A (-)' },
-      { text: 'Слив ❌', callback_data: 'grade_Слив' }
-    ]]
-  };
+// Класс позиции ставит бот, а не пользователь (20.11.2026). Правила — его собственные:
+// A — по контексту; A(-) — против основного контекста, подводящий. Для обоих: нет
+// закрепов/инверсий 1h/4h против (для CHF и по DXY), близко против нет неотработанной
+// FTA 1h/4h, стоп защищён. Не выполнено хоть что-то — «Слив». В журнал пишется
+// «A», «A (-)» или «Слив» — как и раньше, чтобы старые и новые сделки считались вместе.
+const CONTEXT_QUESTION = 'Контекст?';
+const CHECKLIST_TEXT = 'Проверь:\n' +
+  '• нет закрепов/инверсий 1h/4h против (для CHF — и по DXY)\n' +
+  '• близко против нет неотработанной FTA 1h/4h\n' +
+  '• стоп защищён (M5-манипуляция в имбе / снятый часовой фрактал)';
+
+function contextKeyboard() {
+  return { inline_keyboard: [[
+    { text: '✅ По контексту', callback_data: 'ctx_with' },
+    { text: '↩️ Против, подводящий', callback_data: 'ctx_against' }
+  ]] };
 }
 
-// Класс входа: в таблицу идёт ровно текст кнопки, «Своё» — что напишет сам.
-const ENTRY_CLASSES = ['5m+test', '5m_2 conf', '1m_Risk_prop'];
-const ENTRY_CLASS_QUESTION = 'Класс входа:';
+function checklistKeyboard() {
+  return { inline_keyboard: [[
+    { text: '✅ Всё так', callback_data: 'chk_ok' },
+    { text: '❌ Что-то нет', callback_data: 'chk_no' }
+  ]] };
+}
+
+function slivKeyboard() {
+  return { inline_keyboard: [
+    [{ text: 'Не вхожу', callback_data: 'sliv_cancel' }],
+    [{ text: 'Всё равно вхожу (запишу как Слив)', callback_data: 'sliv_go' }]
+  ] };
+}
+
+// Модель входа: в таблицу идёт ровно текст кнопки, «Своё» — что напишет сам.
+// Колонка в журнале «Модель входа» (до 20.11.2026 — «Класс входа» с другими кнопками).
+const ENTRY_CLASSES = ['5m инверсия/бос', '5m инверсия/бос + test 1m confirm', '5m + test 5m', '5m_2 conf'];
+const ENTRY_CLASS_QUESTION = 'Модель входа:';
+// Для A(-) нужен полноценный тест — модель без теста делает вход «Сливом».
+const NO_TEST_MODELS = ['5m инверсия/бос'];
 
 function entryClassKeyboard() {
   return {
     inline_keyboard: [
-      ENTRY_CLASSES.map((c, i) => ({ text: c, callback_data: 'eclass_' + i })),
+      ...ENTRY_CLASSES.map((c, i) => [{ text: c, callback_data: 'eclass_' + i }]),
       [{ text: '✏️ Своё', callback_data: 'eclass_own' }]
     ]
   };
 }
 
+async function askSliv(ctx, state, why, after) {
+  state.slivAfter = after;
+  state.step = 'waiting_sliv';
+  userStates.set(ctx.chat.id, state);
+  await ctx.reply(`🚫 Слив — ${why}. По твоим правилам не входим.`, { reply_markup: slivKeyboard() });
+}
+
 async function setEntryClass(ctx, state, value) {
   state.entryClass = value;
+  if (state.grade === 'A (-)' && NO_TEST_MODELS.includes(value)) {
+    await askSliv(ctx, state, 'для A(-) нужен полноценный тест M5, а в этой модели его нет', 'asset');
+    return;
+  }
   state.step = 'waiting_asset';
   userStates.set(ctx.chat.id, state);
   await ctx.reply('Какой актив?', { reply_markup: assetKeyboard() });
@@ -1368,7 +1407,7 @@ async function saveNewTrade(ctx, state) {
   const sessionLine = session ? `\nСессия: ${session}` : '\n⚠️ Время вне твоих сессий — укажи вручную';
 
   await ctx.reply(
-    `✅ ${state.asset} · класс ${state.grade}${state.entryClass ? ' · вход ' + state.entryClass : ''} · ${riskSummary(state)}${sessionLine}${shots}\n\n` +
+    `✅ ${state.asset} · класс ${state.grade}${state.entryClass ? ' · модель ' + state.entryClass : ''} · ${riskSummary(state)}${sessionLine}${shots}\n\n` +
     'Записал.\n<b>Ты дал цену слова, у тебя есть 5 минут…</b>\n\n/closetrade для закрытия',
     {
       parse_mode: 'HTML',
@@ -1848,14 +1887,14 @@ bot.on('text', async (ctx) => {
 
     } else if (state.step === 'waiting_against') {
       state.against = text;
-      state.step = 'waiting_grade';
+      state.step = 'waiting_context';
       userStates.set(chatId, state);
-      await ctx.reply('Класс позиции:', { reply_markup: gradeKeyboard() });
+      await ctx.reply(CONTEXT_QUESTION, { reply_markup: contextKeyboard() });
 
     } else if (state.step === 'waiting_entry_class' || state.step === 'waiting_entry_class_own') {
       // Текст вместо кнопки — это и есть «своё».
       const own = text.trim();
-      if (!own) { await ctx.reply('Напиши класс входа текстом.'); return; }
+      if (!own) { await ctx.reply('Напиши модель входа текстом.'); return; }
       await setEntryClass(ctx, state, own);
 
     } else if (state.step === 'closing_errors') {
@@ -1879,7 +1918,7 @@ bot.on('text', async (ctx) => {
       state.closeIdx++;
       await askUsdForNext(ctx, state);
 
-    } else if (['waiting_asset', 'waiting_accounts', 'waiting_risk', 'waiting_grade', 'closing_select_trade'].includes(state.step)) {
+    } else if (['waiting_asset', 'waiting_accounts', 'waiting_risk', 'waiting_grade', 'waiting_context', 'waiting_checklist', 'waiting_sliv', 'closing_select_trade'].includes(state.step)) {
       await ctx.reply('Нажми кнопку выше 👆 или /reset чтобы начать заново.');
 
     } else {
@@ -2035,17 +2074,54 @@ bot.on('callback_query', async (ctx) => {
         await askRiskForNext(ctx, state);
       }
 
-    } else if (data.startsWith('grade_')) {
-      if (state.step !== 'waiting_grade') {
+    } else if (data === 'ctx_with' || data === 'ctx_against') {
+      if (state.step !== 'waiting_context') {
         await ack('Этот шаг уже пройден');
         return;
       }
-      state.grade = data.replace('grade_', '');
-      state.step = 'waiting_entry_class';
+      state.contextWith = data === 'ctx_with';
+      state.step = 'waiting_checklist';
       userStates.set(chatId, state);
       await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      await ctx.reply(CHECKLIST_TEXT, { reply_markup: checklistKeyboard() });
 
+    } else if (data === 'chk_ok' || data === 'chk_no') {
+      if (state.step !== 'waiting_checklist') {
+        await ack('Этот шаг уже пройден');
+        return;
+      }
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      if (data === 'chk_no') {
+        await askSliv(ctx, state, 'чек-лист не выполнен', 'model');
+        return;
+      }
+      state.grade = state.contextWith ? 'A' : 'A (-)';
+      state.step = 'waiting_entry_class';
+      userStates.set(chatId, state);
+      await ctx.reply(state.contextWith ? '🟢 Класс A — полный риск' : '🟡 Класс A(-) — входи на 0,5 риска');
       await ctx.reply(ENTRY_CLASS_QUESTION, { reply_markup: entryClassKeyboard() });
+
+    } else if (data === 'sliv_cancel' || data === 'sliv_go') {
+      if (state.step !== 'waiting_sliv') {
+        await ack('Этот шаг уже пройден');
+        return;
+      }
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      if (data === 'sliv_cancel') {
+        userStates.set(chatId, { step: 'idle' });
+        await ctx.reply('👍 Вход отменён. Ничего не записал.', { reply_markup: entryKeyboard() });
+        return;
+      }
+      state.grade = 'Слив';
+      if (state.slivAfter === 'model') {
+        state.step = 'waiting_entry_class';
+        userStates.set(chatId, state);
+        await ctx.reply(ENTRY_CLASS_QUESTION, { reply_markup: entryClassKeyboard() });
+      } else {
+        state.step = 'waiting_asset';
+        userStates.set(chatId, state);
+        await ctx.reply('Какой актив?', { reply_markup: assetKeyboard() });
+      }
 
     } else if (data.startsWith('eclass_')) {
       if (state.step !== 'waiting_entry_class') {
@@ -2056,7 +2132,7 @@ bot.on('callback_query', async (ctx) => {
       if (data === 'eclass_own') {
         state.step = 'waiting_entry_class_own';
         userStates.set(chatId, state);
-        await ctx.reply('Напиши класс входа:');
+        await ctx.reply('Напиши модель входа:');
       } else {
         const value = ENTRY_CLASSES[parseInt(data.slice('eclass_'.length), 10)];
         if (!value) { await ack('Кнопка устарела'); return; }
@@ -2170,7 +2246,7 @@ bot.on('callback_query', async (ctx) => {
       await ctx.reply(
         size ? `Риск на ${name} — сколько $? (аккаунт ${size.toLocaleString('ru-RU')}$)`
              : `Риск на ${name} (% от размера аккаунта)? Размер в Props не задан`,
-        { reply_markup: riskKeyboard(size) });
+        { reply_markup: riskKeyboard(size, name) });
 
     } else if (data === 'bal_cancel') {
       userStates.set(chatId, { step: 'idle' });
@@ -2237,7 +2313,7 @@ module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
   checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo,
-  buildMorningDigest, redNewsToday, assetsHit, loadRulesCards, isWeekendInMinsk, FIRMS,
+  buildMorningDigest, redNewsToday, assetsHit, loadRulesCards, riskKeyboard, isWeekendInMinsk, FIRMS,
   fpCalendarLine, fpEventsToday, announceFpCalendar,
   lookupAvoidingBad, markBadIp
 };
