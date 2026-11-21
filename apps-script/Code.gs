@@ -2,12 +2,14 @@
 
 // Новый счёт — только в КОНЕЦ списка и вместе с action addPropColumns: на позиции
 // колонок завязаны формулы, план и класс входа.
-var PROPS = ['Instant', '100k challenge', 'FundingPips', 'CFT'];
+var PROPS = ['Instant', '100k challenge', 'FundingPips', 'CFT', 'TFW'];
 var PROP_DEFAULT_BALANCE = {
   'Instant': 50000,
   '100k challenge': 100000,
   'FundingPips': 100000,
-  'CFT': 100000
+  'CFT': 100000,
+  // The Funded Way, Rapid PRO Way (instant funded) 100k — куплен 21.11.2026
+  'TFW': 100000
 };
 
 // Закрытые счета: их колонки и история в журнале остаются (на позиции колонок

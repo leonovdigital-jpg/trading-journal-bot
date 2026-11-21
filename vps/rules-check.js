@@ -49,7 +49,16 @@ const FIRMS = [
   // 20.11.2026: два скачивания подряд дают один и тот же текст).
   { firm: 'Crypto Fund Trader', type: 'pages',
     urls: ['https://cryptofundtrader.com/faq', 'https://cryptofundtrader.com/terms-and-conditions'],
-    context: 'Важно: обе страницы описывают все программы фирмы сразу. Его счёт — 2-Phase; правки про 1-Step, Break, Ascend, Instant, 3-Phase и Bybit его не касаются. Terms п.1.3: фирма может менять правила в любой момент, и они действуют сразу.' }
+    context: 'Важно: обе страницы описывают все программы фирмы сразу. Его счёт — 2-Phase; правки про 1-Step, Break, Ascend, Instant, 3-Phase и Bybit его не касаются. Terms п.1.3: фирма может менять правила в любой момент, и они действуют сразу.' },
+  // The Funded Way (счёт TFW, куплен 21.11.2026): справка на Intercom. Список статей —
+  // из sitemap.xml (≈45 английских), текст — тело <article> каждой страницы: вокруг
+  // него меню и «Updated N weeks ago», которые менялись бы каждый день сами.
+  // Terms на сайте — отдельной страницей: FAQ по Terms 1.6 — их часть и меняется без уведомления.
+  { firm: 'The Funded Way', type: 'multi', parts: [
+    { type: 'intercom', sitemap: 'https://help.thefundedway.com/sitemap.xml', lang: 'en' },
+    { type: 'pages', urls: ['https://thefundedway.com/terms-conditions/'] }
+  ],
+    context: 'Важно: справка описывает все программы фирмы. Его счёт — Rapid PRO Way (instant funded, 100k); правки только про Rapid Way, Prime Way, Starter/Straight/Pro Way (2-Step), Swift/Swift PRO Way (1-Step) и Flex Add-On его не касаются, общие правила (новости, запрещённые практики, просадки, выплаты, VPN, копирование) — касаются.' }
 ];
 
 function plain(html) {
@@ -106,6 +115,33 @@ async function pages(src) {
   return out;
 }
 
+// Справка на Intercom: статьи берём из sitemap, из страницы — только <article>.
+async function intercom(src) {
+  const xml = await (await get(src.sitemap)).text();
+  const urls = [...new Set((xml.match(/<loc>[^<]+<\/loc>/g) || [])
+    .map(l => l.slice(5, -6).trim())
+    .filter(u => u.includes(`/${src.lang}/articles/`)))];
+  // Меньше двадцати — обрезанная отдача, а не «статьи удалили».
+  if (urls.length < 20) throw new Error(`${src.sitemap}: статей всего ${urls.length}`);
+  const out = {};
+  for (const url of urls) {
+    let html = null;
+    for (let attempt = 0; attempt < 3 && html === null; attempt++) {
+      try { html = await (await get(url)).text(); }
+      catch (e) { if (attempt === 2) throw e; await new Promise(r => setTimeout(r, 3000)); }
+    }
+    const start = html.indexOf('<article'), end = html.indexOf('</article>');
+    if (start === -1 || end === -1) throw new Error(`${url}: нет тела статьи`);
+    // у Intercom тег с атрибутами: <title data-next-head="">Название | The Funded Way</title>
+    const title = ((html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || url)
+      .replace(/&amp;/g, '&').replace(/&#x27;|&#39;/g, "'").replace(/\s*\|[^|]*$/, '').trim();
+    const text = plain(html.slice(start, end));
+    if (text.length < 100) throw new Error(`${url}: почти пустая статья`);
+    out[url] = { title, url, text };
+  }
+  return out;
+}
+
 async function llmsfull(src) {
   const text = await (await get(src.url)).text();
   const out = {};
@@ -124,6 +160,7 @@ async function fetchFirm(src) {
   if (src.type === 'zendesk') return zendesk(src);
   if (src.type === 'pages') return pages(src);
   if (src.type === 'llmsfull') return llmsfull(src);
+  if (src.type === 'intercom') return intercom(src);
   if (src.type === 'multi') {
     const out = {};
     for (const part of src.parts) Object.assign(out, await fetchFirm(part));

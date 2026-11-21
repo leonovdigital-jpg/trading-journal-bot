@@ -185,7 +185,7 @@ function newRequestId() {
 
 // Список пропов живёт в Apps Script (PROPS) — бот берёт его оттуда,
 // чтобы не держать две копии. Fallback на случай недоступности Sheets.
-const DEFAULT_PROPS = ['Instant', 'FundingPips', 'CFT'];
+const DEFAULT_PROPS = ['Instant', 'FundingPips', 'CFT', 'TFW'];
 let propsCache = null;
 // Размеры аккаунтов (лист Props) — база для пересчёта риска $ → %.
 // После пройденного челленджа размер меняется строкой в Props, поэтому держать их
@@ -481,6 +481,14 @@ const FIRMS = [
   // и чужие идеи (Terms 7.1 vii, xiv), поэтому в строке именно они.
   { name: 'Crypto Fund Trader', accounts: ['CFT'], noNewsWindow: true,
     rule: 'новости разрешены (2-Phase). Нельзя: встречные позиции по одному инструменту, в том числе между счетами; сделки по чужим идеям и сигналам' },
+  // The Funded Way (счёт TFW, Rapid PRO Way — instant funded 100k, куплен 21.11.2026).
+  // Справка, News Trading Policy (12020025): на funded-счетах ±5 минут от high-impact
+  // новости нельзя открывать, закрывать вручную и менять сделки (SL/TP, отложки);
+  // сработавшие сами SL/TP — можно. Прибыль таких сделок аннулируют, повтор — закрытие.
+  // Какой календарь и какие валюты, фирма не пишет — берём красные Forex Factory
+  // по валютам активов, поэтому со значком ≈.
+  { name: 'The Funded Way', accounts: ['TFW'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
+    mark: '≈', note: 'The Funded Way: ±5 мин от новости нельзя открывать, закрывать руками и двигать SL/TP (сработавшие сами SL/TP можно). Календарь фирма не называет — список по Forex Factory.' },
   { name: 'Finotive', accounts: ['Instant'], noNewsWindow: true,
     rule: 'новости не ограничены. Нельзя только встречные или хедж-позиции ±15 мин от красных и жёлтых новостей Forex Factory' }
 ];
@@ -1133,10 +1141,15 @@ const RISK_PRESETS = [0.25, 0.5, 1];
 // потому что в таблицу идёт именно он. Без размера (нет строки в Props) — в %.
 // Свои суммы на конкретном счёте: на Instant пользователь часто входит на 300$ (20.11.2026).
 const EXTRA_RISK_USD = { Instant: [300] };
+// Только свои суммы, без 0.25/0.5/1%: на TFW пользователь входит на 500$ или 700$
+// и не больше (21.11.2026). Там же лимит фирмы — 1% (1000$) на одну идею.
+const ONLY_RISK_USD = { TFW: [500, 700] };
 
 function riskKeyboard(size, name) {
-  const extra = size ? (EXTRA_RISK_USD[name] || []).map(usd => Math.round(usd / size * 100 * 1000) / 1000) : [];
-  const pcts = [...new Set([...RISK_PRESETS, ...extra])].sort((a, b) => a - b);
+  const toPct = usd => Math.round(usd / size * 100 * 1000) / 1000;
+  const only = size && ONLY_RISK_USD[name] ? ONLY_RISK_USD[name].map(toPct) : null;
+  const extra = size ? (EXTRA_RISK_USD[name] || []).map(toPct) : [];
+  const pcts = only || [...new Set([...RISK_PRESETS, ...extra])].sort((a, b) => a - b);
   const presets = pcts.map(pct => ({
     text: size ? `${Math.round(size * pct / 100)}$ (${pct}%)` : `${pct}%`,
     callback_data: `prisk_${pct}`
@@ -1546,7 +1559,7 @@ bot.start((ctx) => {
 // и пересобирает сам, когда фирма меняет правила.
 // Это же и список действующих счетов: карточки закрытых (100k challenge, 19.11.2026)
 // в таблице могут остаться, но в меню не попадают.
-const RULES_ORDER = ['FundingPips', 'Instant', 'CFT'];
+const RULES_ORDER = ['FundingPips', 'Instant', 'CFT', 'TFW'];
 
 async function loadRulesCards() {
   const r = await sheetsPost({ action: 'getRulesCards' });

@@ -9,6 +9,10 @@
 // Счета пользователя. Типы подтвердил пользователь 13.11.2026: Instant — Lite.
 // 100k challenge (Finotive Two Step) закрыт 19.11.2026 — из списка убран. Явно просим не включать чужие варианты: иначе памятка
 // раздувается правилами, которые к счёту не относятся.
+// The Funded Way: статьи про другие модели фирмы. «Rapid PRO Way» сюда не попадает:
+// «Rapid Way» требует пробел между словами, «Pro Way» — без «Rapid» перед ним.
+const TFW_OTHER_MODEL = /\b(Rapid Way|Prime Way|Starter Way|Straight Way|Swift( PRO)? Way|Flex Add-On)\b|(?<!Rapid )\bPro Way\b|\b[12]-Step\b/i;
+
 const ACCOUNTS = [
   {
     account: 'FundingPips', firm: 'FundingPips', size: '100 000 $',
@@ -37,6 +41,17 @@ const ACCOUNTS = [
     pick: () => true,
     note: 'Платформа MT5 или Match-Trader (не Bybit). Трейдер торгует те же сделки в ту же сторону на счетах других фирм.',
     notMine: () => false
+  },
+  {
+    // Куплен 21.11.2026. Справка на Intercom описывает все программы фирмы — статьи
+    // про чужие модели отсекаем по названию; общие (новости, запреты, просадки) — его.
+    account: 'TFW', firm: 'The Funded Way', size: '100 000 $',
+    plan: 'Rapid PRO Way — instant funded, без испытания (правила Rapid Way, Prime Way, 1-Step и 2-Step не включай)',
+    stage: 'funded (instant)',
+    bought: '21.11.2026',
+    pick: a => !TFW_OTHER_MODEL.test(a.title),
+    note: 'Платформа MT5. Трейдер торгует те же сделки в ту же сторону на счетах других фирм, вручную. Риск на сделку — 500$ или 700$.',
+    notMine: a => TFW_OTHER_MODEL.test(a.title)
   }
 ];
 
