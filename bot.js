@@ -486,8 +486,9 @@ const FIRMS = [
   // нельзя открывать, закрывать руками (и частично), менять SL/TP (и в б/у), ставить,
   // менять и удалять отложки; речи и пресс-конференции — всё событие + 5 минут. Держать
   // позицию и срабатывание заранее выставленных SL/TP — можно. Только инструменты,
-  // напрямую связанные с валютой новости. Календарь фирмы не подтверждён — Forex Factory,
-  // только красные. Свой блок с окнами — tfwNewsBlock.
+  // напрямую связанные с валютой новости. Календарь — официально Forex Factory, красная
+  // папка (поддержка, 22.11.2026). Отложка, выставленная ДО окна и сработавшая внутри, —
+  // не нарушение; ставить, менять и удалять отложки внутри окна нельзя. Свой блок — tfwNewsBlock.
   { name: 'The Funded Way', accounts: ['TFW'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
     ownBlock: 'tfw' },
   { name: 'Finotive', accounts: ['Instant'], noNewsWindow: true,
@@ -639,7 +640,9 @@ function tfwSpeechMinutes(title, currency) {
 // окна в конце сливаются в одно (просьба пользователя 22.11.2026).
 function tfwNewsBlock(ff, now, label) {
   const currencies = [...new Set(ASSETS.flatMap(a => ASSET_CURRENCIES[a] || []))];
-  const head = `🕔 ${label} — окна запрета ±5 мин (Forex Factory, красные ${currencies.join('/')}, время Минска):`;
+  const head = `🕔 ${label} — окна запрета ±5 мин (календарь фирмы — Forex Factory, красные ${currencies.join('/')}, время Минска):`;
+  // напоминание — в каждом отчёте, и в день без новостей тоже (просьба пользователя 22.11.2026)
+  const pending = '⏳ Отложенные ордера — выставить или снять ДО начала окна. Внутри окна их не трогать.';
   const hm = d => minskTime(d);
   const add = (d, min) => new Date(d.getTime() + min * 60000);
 
@@ -651,7 +654,7 @@ function tfwNewsBlock(ff, now, label) {
     if (!byKey.get(key).titles.includes(n.title)) byKey.get(key).titles.push(n.title);
   }
   const events = [...byKey.values()].sort((a, b) => a.at - b.at);
-  if (!events.length) return [`✅ ${label}: Новостей нет, торговать можно весь день`];
+  if (!events.length) return [`✅ ${label}: Новостей нет, торговать можно весь день`, pending];
 
   const lines = [head];
   const windows = [];
@@ -694,6 +697,7 @@ function tfwNewsBlock(ff, now, label) {
       lines.push(`   ${hm(w.from)} — ${w.speech ? '~' : ''}${hm(w.to)} → ${order.join(', ')}`);
     }
   }
+  lines.push(pending);
   return lines;
 }
 
