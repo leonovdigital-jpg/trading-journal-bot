@@ -244,6 +244,20 @@ function doPost(e) {
       if (t) ss.deleteSheet(t);
       return createResponse(true, t ? 'dropped' : 'none');
     }
+    // Удаляет страховочные копии листа, сделанные перед вставкой колонок нового счёта.
+    // Трогает только листы с именем «Traders копия …» — настоящий журнал не задеть.
+    if (data.action === 'dropSheetCopies') {
+      var dropped = [];
+      ss.getSheets().forEach(function (s) {
+        var n = s.getName();
+        if (n.indexOf('Traders копия ') === 0 && (!data.names || data.names.indexOf(n) >= 0)) {
+          ss.deleteSheet(s);
+          dropped.push(n);
+        }
+      });
+      return createResponse(true, 'dropped ' + dropped.length, { dropped: dropped,
+        left: ss.getSheets().map(function (s) { return s.getName(); }) });
+    }
     if (data.action === 'headers')       { buildHeaders(sheet); return createResponse(true, 'headers rebuilt'); }
     if (data.action === 'ping') {
       // sizes — размер аккаунта из Props на сейчас: бот пересчитывает риск $ → %
@@ -1587,7 +1601,7 @@ function buildHeaders(sheet) {
     .clearDataValidations();
 
   sheet.getRange(1, 5).setValue('Факторы за');   // E — до 20.11.2026 «Мысли до»
-  sheet.getRange(1, COL_AGAINST).setValue('Аргументы против');
+  sheet.getRange(1, COL_AGAINST).setValue('Факторы против');   // F — до 22.11.2026 «Аргументы против»
   sheet.getRange(1, COL_TAKESTOP).setValue('Take/Stop (ист.)');
   sheet.getRange(1, COL_RISK_OLD).setValue('Risk (ист.)');
   sheet.getRange(1, COL_RR_OLD).setValue('RR (ист.)');
