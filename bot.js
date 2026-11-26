@@ -488,7 +488,7 @@ const FIRMS = [
   // позицию и срабатывание заранее выставленных SL/TP — можно. Только инструменты,
   // напрямую связанные с валютой новости. Календарь — официально Forex Factory, красная
   // папка (поддержка, 22.11.2026). Отложка, выставленная ДО окна и сработавшая внутри, —
-  // не нарушение; ставить, менять и удалять отложки внутри окна нельзя. Свой блок — tfwNewsBlock.
+  // не нарушение; ставить, менять и удалять отложки внутри окна нельзя. Окно — tfwWindow, в утреннем сообщении — в строке новости.
   { name: 'The Funded Way', accounts: ['TFW'], calendar: 'Forex Factory', source: 'forexfactory', impacts: ['High'],
     ownBlock: 'tfw' },
   { name: 'Finotive', accounts: ['Instant'], noNewsWindow: true,
@@ -599,7 +599,7 @@ function fpCalendarLine(fp, today, currencies, label) {
   if (!fp || fp.date !== today) {
     return { final: false, text: `⏳ ${label}: календарь FundingPips ещё не прочитан — Мак сегодня ещё не включался. Дочитаю, как проснётся — до открытия Лондона.` };
   }
-  const list = evs => [...evs].sort((a, b) => a.time.localeCompare(b.time)).map(e => `   ${e.time}  ${e.currency}${assetsHit(e.currency)} — ${e.title}`);
+  const list = evs => [...evs].sort((a, b) => a.time.localeCompare(b.time)).map(e => `${e.time}${assetsHit(e.currency)} — ${e.currency} ${e.title}`);
   if (fp.status === 'ok') {
     const { lockSeen, restricted, mine } = fpEventsToday(fp, currencies);
     if (!lockSeen && mine.length) {
@@ -635,70 +635,13 @@ function tfwSpeechMinutes(title, currency) {
   return { min: 60, what: 'речь ~30–60 мин' };
 }
 
-// Окна запрета The Funded Way на сегодня: по каждой красной новости USD/CHF/GBP —
-// какие активы и с какого по какое время нельзя трогать сделки. Пересекающиеся
-// окна в конце сливаются в одно (просьба пользователя 22.11.2026).
-function tfwNewsBlock(ff, now, label) {
-  const currencies = [...new Set(ASSETS.flatMap(a => ASSET_CURRENCIES[a] || []))];
-  const head = `🕔 ${label} — окна запрета ±5 мин (календарь фирмы — Forex Factory, красные ${currencies.join('/')}, время Минска):`;
-  // напоминание — в каждом отчёте, и в день без новостей тоже (просьба пользователя 22.11.2026)
-  const pending = '⏳ Отложенные ордера — выставить или снять ДО начала окна. Внутри окна их не трогать.';
-  const hm = d => minskTime(d);
-  const add = (d, min) => new Date(d.getTime() + min * 60000);
-
-  // одна новость — одна строка: те же время и валюта сливаются
-  const byKey = new Map();
-  for (const n of redNewsToday(ff, ['High'], currencies, now)) {
-    const key = `${n.at.getTime()}|${n.country}`;
-    if (!byKey.has(key)) byKey.set(key, { at: n.at, currency: n.country, titles: [] });
-    if (!byKey.get(key).titles.includes(n.title)) byKey.get(key).titles.push(n.title);
-  }
-  const events = [...byKey.values()].sort((a, b) => a.at - b.at);
-  if (!events.length) return [`✅ ${label}: Новостей нет, торговать можно весь день`, pending];
-
-  const lines = [head];
-  const windows = [];
-  for (const e of events) {
-    const assets = ASSETS.filter(a => (ASSET_CURRENCIES[a] || []).includes(e.currency));
-    const title = e.titles.slice(0, 2).join(' / ');
-    const speechTitle = e.titles.find(t => TFW_SPEECH.test(t));
-    const from = add(e.at, -5);
-    let to, text;
-    if (speechTitle) {
-      const sp = tfwSpeechMinutes(speechTitle, e.currency);
-      to = add(e.at, sp.min + 5);
-      text = [`🎤 ${hm(e.at)} ${e.currency} — ${title} → ${assets.join(', ')}`,
-        `   Запрет: ${hm(from)} — ~${hm(to)} (${sp.what} + 5 мин). Ориентировочно, следи за фактическим окончанием.`];
-    } else {
-      to = add(e.at, 5);
-      text = [`${hm(e.at)} ${e.currency} ${title} → ${assets.join(', ')}`,
-        `   Окно запрета: с ${hm(from)} до ${hm(to)}`];
-    }
-    if (to < now) text[0] += ' (уже прошла)';
-    lines.push(...text);
-    windows.push({ from, to, assets, speech: !!speechTitle });
-  }
-
-  // пересекающиеся окна — одно окно с объединёнными активами
-  const mergedW = [];
-  for (const w of windows.sort((a, b) => a.from - b.from)) {
-    const last = mergedW[mergedW.length - 1];
-    if (last && w.from <= last.to) {
-      if (w.to > last.to) last.to = w.to;
-      last.assets = [...new Set([...last.assets, ...w.assets])];
-      last.speech = last.speech || w.speech;
-      last.n++;
-    } else mergedW.push({ ...w, n: 1 });
-  }
-  if (mergedW.some(w => w.n > 1)) {
-    lines.push('   Окна пересекаются — итого:');
-    for (const w of mergedW) {
-      const order = ASSETS.filter(a => w.assets.includes(a));
-      lines.push(`   ${hm(w.from)} — ${w.speech ? '~' : ''}${hm(w.to)} → ${order.join(', ')}`);
-    }
-  }
-  lines.push(pending);
-  return lines;
+// Окно запрета The Funded Way для новости: ±5 минут, у речей — всё событие + 5 минут.
+function tfwWindow(at, titles, currency) {
+  const add = min => new Date(at.getTime() + min * 60000);
+  const speechTitle = titles.find(t => TFW_SPEECH.test(t));
+  if (!speechTitle) return { from: add(-5), to: add(5), speech: false };
+  const sp = tfwSpeechMinutes(speechTitle, currency);
+  return { from: add(-5), to: add(sp.min + 5), speech: true, what: sp.what };
 }
 
 function redNewsToday(events, impacts, currencies, now) {
@@ -710,143 +653,134 @@ function redNewsToday(events, impacts, currencies, now) {
     .sort((a, b) => a.at - b.at);
 }
 
+// Утреннее сообщение (с 26.11.2026 — по просьбе пользователя только то, что меняется
+// день ото дня): новости, если они есть, — одной строкой каждая, актив первым; прочитан
+// ли календарь FundingPips; изменения правил, если они есть. Правила фирм, которые
+// одинаковы каждый день (CFT, Finotive, напоминание про отложки TFW), он уже помнит.
+// Молчания про сбои нет: не открылся календарь или не отработала проверка правил —
+// об этом строка всегда, иначе пустое место читалось бы как «всё спокойно».
 async function buildMorningDigest(now, canaryWarning) {
   const weekday = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Minsk', weekday: 'long' }).format(now);
   const date = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Minsk', day: '2-digit', month: '2-digit' }).format(now);
   const currencies = [...new Set(ASSETS.flatMap(a => ASSET_CURRENCIES[a] || []))];
+  const lines = [`🌅 ${weekday[0].toUpperCase() + weekday.slice(1)}, ${date}`, ''];
 
-  const lines = [`🌅 ${weekday[0].toUpperCase() + weekday.slice(1)}, ${date}`, '', `🔴 Новости, запрещённые правилами пропов (${ASSETS.join(', ')}):`];
-  const label = f => (f.accounts.length === 1 && f.accounts[0] === f.name) ? f.name : `${f.name} (${f.accounts.join(', ')})`;
-
-  // У каждой фирмы всегда есть итог: «нет», «вот какие» или «не смог узнать».
-  // Пропущенная фирма читалась бы как «новостей нет».
   let ff = null, ffError = null;
   try { ff = await fetchForexFactory(); } catch (e) { ffError = e.message; }
 
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Minsk' }).format(now);
+  const fpFirm = FIRMS.find(f => f.ownCalendar === 'fundingpips');
+  const tfwFirm = FIRMS.find(f => f.ownBlock === 'tfw');
   let fp = null;
-  if (FIRMS.some(f => f.ownCalendar === 'fundingpips')) {
+  if (fpFirm) {
     try { fp = await fetchFpCalendar(); } catch (e) { fp = { date: today, status: 'error', reason: `таблица не ответила (${e.message})` }; }
   }
   const nowHM = minskTime(now);
 
-  // Сначала собираем события по фирмам, потом сливаем одинаковые: одна новость
-  // у всех пропов — одна строка (просьба пользователя). Одинаковой считаем новость
-  // с тем же временем и той же валютой: окно запрета считается по времени выхода,
-  // а названия у разных календарей разные (у FundingPips «PPI ex. Food/Energy/…»,
-  // у Forex Factory «Core PPI m/m») при одном и том же релизе.
-  const status = [];                 // строки ⏳/❓ про фирмы, у которых не всё гладко
-  const notes = [];
-  const merged = new Map();          // «HH:MM|USD» → { time, currency, titles, firms, passed }
-  const resolved = [];               // фирмы, по которым итог есть (пусть и пустой)
-  let failed = false;
-
-  const add = (firm, mark, ev) => {
-    const key = `${ev.time}|${ev.currency}`;
-    if (!merged.has(key)) merged.set(key, { time: ev.time, currency: ev.currency, titles: [], firms: [], passed: ev.passed });
-    const m = merged.get(key);
-    if (ev.title && !m.titles.includes(ev.title)) m.titles.push(ev.title);
-    if (!m.firms.includes(firm.name + mark)) m.firms.push(firm.name + mark);
+  // Одна новость — одна строка: те же время и валюта у разных календарей сливаются
+  // (названия у FundingPips и Forex Factory разные при одном и том же релизе).
+  const events = new Map();
+  const put = (time, currency, title, firm) => {
+    const key = `${time}|${currency}`;
+    if (!events.has(key)) events.set(key, { time, currency, titles: [], firms: [] });
+    const e = events.get(key);
+    if (title && !e.titles.includes(title)) e.titles.push(title);
+    if (!e.firms.includes(firm)) e.firms.push(firm);
+    return e;
   };
 
-  const ruleLines = [];               // фирмы без окна по новостям — их правило одной строкой
-  const ownBlocks = [];              // фирмы со своим блоком (The Funded Way — окна запрета)
-  for (const firm of FIRMS) {
-    let mark = firm.mark || '';
-
-    if (firm.ownBlock === 'tfw') {
-      if (!ff) ownBlocks.push(`❓ ${label(firm)}: не смог узнать — Forex Factory не открылся (${ffError})`);
-      else ownBlocks.push('', ...tfwNewsBlock(ff, now, label(firm)));
-      continue;
-    }
-
-    if (firm.noNewsWindow) {
-      ruleLines.push(`✅ ${label(firm)}: ${firm.rule}`);
-      continue;
-    }
-
-    if (firm.ownCalendar === 'fundingpips') {
-      digestFpKey = fp && fp.date === today ? fpKey(fp) : '';
-      const st = fpCalendarLine(fp, today, currencies, label(firm));
-      if (st.final) {
-        const { lockSeen, restricted, mine } = fpEventsToday(fp, currencies);
-        if (!lockSeen && mine.length) status.push(`❓ ${label(firm)}: метку Restricted в календаре не распознал — ниже все его события по твоим валютам`);
-        for (const e of (lockSeen ? restricted : mine)) add(firm, '', { ...e, passed: e.time < nowHM });
-        resolved.push(label(firm));
-        continue;
-      }
-      // ⏳/❓ — почему календарь фирмы не прочитан. Запасной список по Forex Factory
-      // больше не подставляем: ниже всегда есть общий блок Forex Factory, и список
-      // здесь был бы его повтором (пользователь просил не дублировать).
-      status.push(`${st.text} Пока ориентируйся на блок Forex Factory ниже.`);
-      continue;                      // не «нет» и не сбой — итог даёт строка выше
-    }
-
-    if (firm.source === 'forexfactory' && !ff) {
-      status.push(`❓ ${label(firm)}: не смог узнать — ${firm.calendar} не открылся (${ffError})`);
-      failed = true;
-      continue;
-    }
-    if (firm.note && !notes.includes(`${mark} ${firm.note}`)) notes.push(`${mark} ${firm.note}`);
-    resolved.push(label(firm));
-    for (const n of redNewsToday(ff, firm.impacts, firm.allCurrencies ? null : currencies, now)) {
-      add(firm, mark, { time: minskTime(n.at), currency: n.country, title: n.title, passed: n.at < now });
+  // FundingPips — по своему календарю (метка Restricted). Не прочитан — запасной
+  // вариант по красным Forex Factory, со значком ≈.
+  let fpLine = null, fpRead = false;
+  if (fpFirm) {
+    const name = fpFirm.accounts[0];
+    digestFpKey = fp && fp.date === today ? fpKey(fp) : '';
+    const st = fpCalendarLine(fp, today, currencies, name);
+    if (st.final) {
+      fpRead = true;
+      const { lockSeen, restricted, mine } = fpEventsToday(fp, currencies);
+      for (const e of (lockSeen ? restricted : mine)) put(e.time, e.currency, e.title, name);
+      fpLine = lockSeen || !mine.length
+        ? `✅ ${name}: календарь прочитан`
+        : `❓ ${name}: календарь прочитан, но метку Restricted не распознал — в списке все его события по твоим валютам`;
+    } else {
+      fpLine = `${st.text} Пока по красным Forex Factory (≈).`;
     }
   }
 
-  for (const st of status) lines.push(st);
-  const events = [...merged.values()].sort((a, b) => a.time.localeCompare(b.time));
-  if (!events.length) {
-    if (!failed) for (const name of resolved) lines.push(`✅ ${name}: нет`);
-    else for (const name of resolved) lines.push(`✅ ${name}: нет`);
-  } else {
-    const allNames = FIRMS.filter(f => !f.noNewsWindow && !f.ownBlock).map(f => f.name);
-    for (const e of events) {
-      const everyone = allNames.every(n => e.firms.some(f => f.replace(/[≈*]$/, '') === n));
-      const who = allNames.length === 1 ? e.firms.join(', ') : (everyone ? 'у всех' : `только ${e.firms.join(', ')}`);
-      const title = e.titles.slice(0, 2).join(' / ');
-      lines.push(`   ${e.time}  ${e.currency}${assetsHit(e.currency)} — ${title} — ${who}${e.passed ? ' (уже прошла)' : ''}`);
-    }
-  }
-  for (const n of ruleLines) lines.push(n);
-  for (const n of notes) lines.push(n);
-  for (const n of ownBlocks) lines.push(n);
-
-  // Постоянный блок Forex Factory — по просьбе пользователя (13.11.2026), отдельно от
-  // правил фирм: общая картина красных новостей по валютам его активов, что бы ни
-  // считала каждая фирма. Одна новость — одна строка.
-  lines.push('', `📰 Forex Factory — красные новости по ${ASSETS.join(', ')}:`);
-  if (!ff) {
-    lines.push(`❓ не смог узнать — Forex Factory не открылся (${ffError})`);
-  } else {
-    const red = new Map();
+  // The Funded Way — красные Forex Factory (его официальный календарь), с окном запрета.
+  if (ff) {
     for (const n of redNewsToday(ff, ['High'], currencies, now)) {
-      const key = `${minskTime(n.at)}|${n.country}`;
-      if (!red.has(key)) red.set(key, { time: minskTime(n.at), currency: n.country, titles: [], passed: n.at < now });
-      if (!red.get(key).titles.includes(n.title)) red.get(key).titles.push(n.title);
-    }
-    if (!red.size) lines.push('✅ нет');
-    for (const e of [...red.values()].sort((a, b) => a.time.localeCompare(b.time))) {
-      lines.push(`   ${e.time}  ${e.currency}${assetsHit(e.currency)} — ${e.titles.slice(0, 2).join(' / ')}${e.passed ? ' (уже прошла)' : ''}`);
+      const time = minskTime(n.at);
+      if (tfwFirm) {
+        const e = put(time, n.country, n.title, tfwFirm.accounts[0]);
+        e.at = n.at;
+      }
+      if (fpFirm && !fpRead) put(time, n.country, n.title, fpFirm.accounts[0] + '≈');
     }
   }
+
+  const list = [...events.values()].sort((a, b) => a.time.localeCompare(b.time));
+  const windows = [];
+  if (list.length) {
+    lines.push(`🔴 Новости, запрещённые правилами пропов:`);
+    for (const e of list) {
+      const assets = ASSETS.filter(a => (ASSET_CURRENCIES[a] || []).includes(e.currency));
+      let tail = '', passed = e.time < nowHM;
+      if (e.at && tfwFirm) {
+        const w = tfwWindow(e.at, e.titles, e.currency);
+        windows.push({ ...w, assets });
+        tail = w.speech
+          ? ` · TFW запрет ${minskTime(w.from)}–~${minskTime(w.to)} (${w.what} + 5 мин, следи за окончанием)`
+          : ` · TFW окно ${minskTime(w.from)}–${minskTime(w.to)}`;
+        passed = w.to < now;
+      }
+      const icon = tail.includes('запрет') ? '🎤 ' : '';
+      lines.push(`${icon}${e.time} ⛔ ${assets.join(', ')} — ${e.currency} ${e.titles.slice(0, 2).join(' / ')} — ${e.firms.join(', ')}${tail}${passed ? ' (уже прошла)' : ''}`);
+    }
+    // пересекающиеся окна TFW — одним окном, активы объединяются (с запасом)
+    const mergedW = [];
+    for (const w of windows.sort((a, b) => a.from - b.from)) {
+      const last = mergedW[mergedW.length - 1];
+      if (last && w.from <= last.to) {
+        if (w.to > last.to) last.to = w.to;
+        last.assets = [...new Set([...last.assets, ...w.assets])];
+        last.speech = last.speech || w.speech;
+        last.n++;
+      } else mergedW.push({ ...w, n: 1 });
+    }
+    for (const w of mergedW.filter(w => w.n > 1)) {
+      lines.push(`TFW, окна пересекаются — одно окно ${minskTime(w.from)}–${w.speech ? '~' : ''}${minskTime(w.to)} ⛔ ${ASSETS.filter(a => w.assets.includes(a)).join(', ')}`);
+    }
+  } else if (ff) {
+    lines.push('📰 Новостей нет');
+  }
+  if (!ff) lines.push(`❓ Forex Factory не открылся (${ffError}) — красные новости проверь сам`);
+  if (fpLine) lines.push(fpLine);
 
   // Итог по правилам сервер пишет в таблицу в 08:30, по фирме отдельно. Нет
-  // сегодняшнего итога — так и говорим: молчание здесь означало бы «всё спокойно».
-  lines.push('', '📋 Изменения правил:');
+  // сегодняшнего итога — так и говорим: молчание означало бы «всё спокойно».
   let digest = null, digestError = null;
   try {
     const r = await sheetsPost({ action: 'getRulesDigest' });
     digest = (r && Array.isArray(r.data)) ? r.data : [];
   } catch (e) { digestError = e.message; }
 
-  const icon = { none: '✅', changed: '⚠️', error: '❓', started: '🆕' };
+  const icon = { changed: '⚠️', error: '❓', started: '🆕' };
+  // «Без изменений» — только по фирмам, у которых сегодняшняя проверка правда прошла,
+  // и с их списком: пользователь должен видеть, что правила прочитаны, а не что
+  // проверка молча упала (просьба 26.11.2026).
+  const ruleLines = [], checked = [];
   for (const firm of FIRMS) {
-    if (!digest) { lines.push(`❓ ${firm.name}: не смог проверить — таблица не ответила (${digestError})`); continue; }
+    if (!digest) { ruleLines.push(`❓ не смог проверить ни одну фирму — таблица не ответила (${digestError})`); break; }
     const d = digest.find(x => x.firm === firm.name);
-    if (!d || d.date !== today) { lines.push(`❓ ${firm.name}: не смог проверить — сегодня проверка не отработала`); continue; }
-    lines.push(`${icon[d.status] || '❓'} ${firm.name}: ${d.status === 'none' ? 'нет' : d.text}`);
+    if (!d || d.date !== today) { ruleLines.push(`❓ ${firm.name}: не смог проверить — сегодня проверка не отработала`); continue; }
+    if (d.status === 'none') { checked.push(firm.name); continue; }
+    ruleLines.push(`${icon[d.status] || '❓'} ${firm.name}: ${d.text}`);
   }
+  lines.push('', '📋 Правила:');
+  if (checked.length) lines.push(`✅ без изменений — ${checked.join(', ')}`);
+  lines.push(...ruleLines);
 
   if (canaryWarning) lines.push('', canaryWarning);
   return lines.join('\n');
@@ -2463,7 +2397,7 @@ module.exports = {
   bot, sheetsPost, uploadToGoogleSheets, updateTradeResult, getOpenTrades, getStats,
   parseNumber, fmtMoney, fmtPct, fmtRR, formatStats, usdToRiskPct, detectSession, restoreStates,
   checkWorker, notifyAdmin, runCanary, maybeRunCanary, fetchPropInfo, startPropInfo,
-  buildMorningDigest, redNewsToday, tfwNewsBlock, assetsHit, loadRulesCards, riskKeyboard, isWeekendInMinsk, FIRMS,
+  buildMorningDigest, redNewsToday, tfwWindow, assetsHit, loadRulesCards, riskKeyboard, isWeekendInMinsk, FIRMS,
   fpCalendarLine, fpEventsToday, announceFpCalendar,
   lookupAvoidingBad, markBadIp
 };
